@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v1.5.0
+ * Ultimate Powerflow Card v1.6.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -115,40 +115,6 @@ function startSnow(canvas) {
   return () => cancelAnimationFrame(rafId);
 }
 
-// ── Energy flow calculator ────────────────────────────────
-const THRESHOLD = 5;
-
-function calcFlows(v) {
-  const clamp = (n) => Math.max(0, n || 0);
-  const solar = clamp(v.solar);
-  const bch   = clamp(v.bch);
-  const bdis  = clamp(v.bdis);
-  const ev    = clamp(v.ev);
-  const house = clamp(v.house);
-  const load  = house + ev;
-
-  const s2l  = Math.min(solar, load);
-  const srem = solar - s2l;
-  const s2b  = Math.min(srem, bch);
-  const s2g  = Math.max(0, srem - s2b);
-  const def  = load - s2l;
-  const b2l  = Math.min(bdis, def);
-  const g2l  = Math.max(0, def - b2l);
-  const gimp = g2l > 1 ? g2l : Math.max(0, v.grid || 0);
-
-  return {
-    s2h:  load > 0 ? s2l * (house / load) : 0,
-    s2b,
-    s2g,
-    b2h:  load > 0 ? b2l * (house / load) : 0,
-    g2h:  gimp,
-    h2ev: ev,
-    gimp,
-    gexp: s2g > 1 ? s2g : 0,
-  };
-}
-
-// ── Cable route waypoints ─────────────────────────────────
 // x = 0-100 (left→right), y = 0-100 (top→bottom) of the 16:9 card.
 // These follow the white physical cables visible in the house images.
 //
@@ -167,14 +133,7 @@ const ROUTES = {
   meter_to_ev:    [[57,63],[57,76],[22,76],[22,70]],
 };
 
-function buildSvgPath(routeKey, power, color, animCls, reversed) {
-  const active = Math.abs(power) >= THRESHOLD;
-  const pts    = reversed ? [...ROUTES[routeKey]].reverse() : ROUTES[routeKey];
-  const d      = pts.map((c, i) => (i === 0 ? "M" : "L") + c[0] + " " + c[1]).join(" ");
-  const cls    = active ? animCls : "fl-off";
-  const glow   = active ? `filter:drop-shadow(0 0 4px ${color});` : "";
-  return `<path class="${cls}" d="${d}" stroke="${color}" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="${glow}"/>`;
-}
+// Flow lines removed by user request
 
 // ── Default positions & colors ────────────────────────────
 const DEF_POS = {
@@ -196,7 +155,6 @@ const CARD_CSS = `
   .wrap { position: relative; width: 100%; padding-bottom: 56.25%; overflow: hidden; }
   .inner { position: absolute; inset: 0; }
   .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-  .svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
   .wx { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
   .wx canvas { width: 100%; height: 100%; opacity: .38; }
 
@@ -218,9 +176,6 @@ const CARD_CSS = `
   .lbl-val.na { color: rgba(255,255,255,.4); font-size: 11px; }
 
   @keyframes fd { to { stroke-dashoffset: -36; } }
-  .fl-act  { stroke-dasharray: 10 7; animation: fd  .9s linear infinite; }
-  .fl-slow { stroke-dasharray: 10 7; animation: fd 1.8s linear infinite; }
-  .fl-fast { stroke-dasharray: 10 7; animation: fd  .45s linear infinite; }
   .fl-off  { opacity: .08; }
 
   @media (max-width: 500px) {
@@ -244,7 +199,6 @@ const EDITOR_CSS = `
   .ci input[type=color] { width: 40px; height: 28px; border: none; background: none; cursor: pointer; border-radius: 6px; }
   .sel { width: 100%; background: var(--card-background-color, #1c1c2e); color: var(--primary-text-color);
          border: 1px solid var(--divider-color, rgba(255,255,255,.2)); border-radius: 4px; padding: 8px; font-size: 14px; margin-top: 4px; }
-  .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
 `;
 
 // ── Main Card element ─────────────────────────────────────
@@ -320,10 +274,6 @@ class UltimatePowerflowCard extends HTMLElement {
     return (this._config.label_positions && this._config.label_positions[key]) || DEF_POS[key];
   }
 
-  _animCls() {
-    const sp = this._config.animation_speed || "normal";
-    return sp === "slow" ? "fl-slow" : sp === "fast" ? "fl-fast" : "fl-act";
-  }
 
   _label(key, name, value) {
     const p  = this._pos(key);
@@ -338,8 +288,6 @@ class UltimatePowerflowCard extends HTMLElement {
   _render() {
     if (!this._config) return;
     const cfg = this._config;
-    const col = this._colors();
-    const ac  = this._animCls();
 
     // Sensor values
     const gv   = parseVal(this._stateOf(cfg.grid_power_entity));
@@ -349,7 +297,6 @@ class UltimatePowerflowCard extends HTMLElement {
     const bdis = cfg.battery_enabled    ? parseVal(this._stateOf(cfg.battery_discharging_power_entity)) : null;
     const ev   = cfg.ev_charger_enabled ? parseVal(this._stateOf(cfg.ev_charger_power_entity))          : null;
 
-    const flows = calcFlows({ solar: sv || 0, bch: bch || 0, bdis: bdis || 0, ev: ev || 0, house: hv || 0, grid: gv || 0 });
 
     // Image
     const img = pickImage(
@@ -365,15 +312,7 @@ class UltimatePowerflowCard extends HTMLElement {
       ? `<div class="wx"><canvas class="sxc"></canvas></div>`
       : "";
 
-    // SVG flow lines
-    const totalSolar = flows.s2h + flows.s2b + flows.s2g;
-    const totalBat   = flows.s2b + flows.b2h;
-    const lines = [
-      buildSvgPath("meter_to_grid",  flows.gimp,   col.grid,    ac, false),
-      cfg.solar_enabled      ? buildSvgPath("solar_to_meter", totalSolar,   col.solar,   ac, false) : "",
-      cfg.battery_enabled    ? buildSvgPath("meter_to_bat",   totalBat,     col.battery, ac, flows.b2h > flows.s2b) : "",
-      cfg.ev_charger_enabled ? buildSvgPath("meter_to_ev",    flows.h2ev,   col.ev,      ac, false) : "",
-    ].join("");
+
 
     // Battery display: prefer charging, else discharging
     const batVal = (bch || 0) > 0 ? bch : bdis !== null ? bdis : null;
@@ -393,7 +332,7 @@ class UltimatePowerflowCard extends HTMLElement {
         `<div class="wrap"><div class="inner">` +
           `<img class="bg" src="${img}" alt=""/>` +
           wxHtml +
-          `<svg class="svg" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>` +
+
           labels +
         `</div></div>` +
       `</ha-card>`;
@@ -488,39 +427,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       (c.ev_charger_enabled ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity) : "") +
       ep("Weather Entity (optional)", "weather_entity", c.weather_entity) +
       `<div class="sec">&#127912; Appearance</div>` +
-      `<label style="font-size:13px;color:var(--secondary-text-color)">Animation Speed</label>` +
-      `<select class="sel" data-key="animation_speed">` +
-        `<option value="slow"${c.animation_speed==="slow"?" selected":""}>Slow</option>` +
-        `<option value="normal"${!c.animation_speed||c.animation_speed==="normal"?" selected":""}>Normal</option>` +
-        `<option value="fast"${c.animation_speed==="fast"?" selected":""}>Fast</option>` +
-      `</select><br/><br/>` +
-      `<label style="font-size:13px;color:var(--secondary-text-color)">Flow Colors</label>` +
-      `<div class="cr">` +
-        `<div class="ci"><input type="color" value="${col.grid||"#f5a623"}" data-key="colors.grid"/><span>Grid</span></div>` +
-        `<div class="ci"><input type="color" value="${col.solar||"#ffd700"}" data-key="colors.solar"/><span>Solar</span></div>` +
-        `<div class="ci"><input type="color" value="${col.battery||"#27ae60"}" data-key="colors.battery"/><span>Battery</span></div>` +
-        `<div class="ci"><input type="color" value="${col.household||"#5dade2"}" data-key="colors.household"/><span>House</span></div>` +
-        (c.ev_charger_enabled ? `<div class="ci"><input type="color" value="${col.ev||"#a569bd"}" data-key="colors.ev"/><span>EV</span></div>` : "") +
-      `</div>` +
-      `<div class="sec">&#128295; Label Positions (% &#8212; optioneel)</div>` +
-      `<div class="pgrid">` +
-        tf("Grid X",  "lp.grid.x",  pos.grid  && pos.grid.x  !== undefined ? pos.grid.x  : "") +
-        tf("Grid Y",  "lp.grid.y",  pos.grid  && pos.grid.y  !== undefined ? pos.grid.y  : "") +
-        tf("House X", "lp.house.x", pos.house && pos.house.x !== undefined ? pos.house.x : "") +
-        tf("House Y", "lp.house.y", pos.house && pos.house.y !== undefined ? pos.house.y : "") +
-        (c.solar_enabled
-          ? tf("Solar X","lp.solar.x", pos.solar&&pos.solar.x!==undefined?pos.solar.x:"") +
-            tf("Solar Y","lp.solar.y", pos.solar&&pos.solar.y!==undefined?pos.solar.y:"")
-          : "") +
-        (c.battery_enabled
-          ? tf("Battery X","lp.bat.x", pos.bat&&pos.bat.x!==undefined?pos.bat.x:"") +
-            tf("Battery Y","lp.bat.y", pos.bat&&pos.bat.y!==undefined?pos.bat.y:"")
-          : "") +
-        (c.ev_charger_enabled
-          ? tf("EV X","lp.ev.x", pos.ev&&pos.ev.x!==undefined?pos.ev.x:"") +
-            tf("EV Y","lp.ev.y", pos.ev&&pos.ev.y!==undefined?pos.ev.y:"")
-          : "") +
-      `</div>`;
+      "";
 
     // Bind events
     this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
@@ -560,7 +467,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v1.5.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v1.6.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
