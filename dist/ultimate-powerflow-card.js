@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v1.3.0
+ * Ultimate Powerflow Card v1.4.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -35,7 +35,9 @@ function fmtW(w) {
 
 function parseVal(s) {
   if (!s || s === "unavailable" || s === "unknown") return null;
-  const n = parseFloat(s);
+  // Handle both European comma (2,27) and standard period (2.27) decimal format
+  const normalized = String(s).trim().replace(/\s/g, "").replace(",", ".");
+  const n = parseFloat(normalized);
   return isNaN(n) ? null : n;
 }
 
@@ -176,11 +178,11 @@ function buildSvgPath(routeKey, power, color, animCls, reversed) {
 
 // ── Default positions & colors ────────────────────────────
 const DEF_POS = {
-  grid:  { x: 87, y: 59 },
-  house: { x: 68, y: 53 },
-  solar: { x: 35, y: 20 },
-  bat:   { x: 44, y: 57 },
-  ev:    { x: 14, y: 63 },
+  grid:  { x: 91, y: 60 },   // far right, near grid transformer
+  house: { x: 73, y: 57 },   // right of meter/inverter box
+  solar: { x: 58, y: 40 },   // center of solar panels on roof
+  bat:   { x: 55, y: 80 },   // below battery unit
+  ev:    { x: 17, y: 57 },   // left, near EV charger pole
 };
 
 const DEF_COLORS = {
@@ -379,9 +381,9 @@ class UltimatePowerflowCard extends HTMLElement {
     // Labels
     const labels = [
       this._label("grid",  "Grid",    gv !== null ? Math.abs(gv) : null),
-      this._label("house", "House",   hv),
-      cfg.solar_enabled      ? this._label("solar", "Solar",   sv)     : "",
-      cfg.battery_enabled    ? this._label("bat",   "Battery", batVal) : "",
+      this._label("house", "Thuis",   hv),
+      cfg.solar_enabled      ? this._label("solar", "Panelen", sv)     : "",
+      cfg.battery_enabled    ? this._label("bat",   "Batterij",batVal) : "",
       cfg.ev_charger_enabled ? this._label("ev",    "EV",      ev)     : "",
     ].join("");
 
@@ -557,7 +559,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v1.3.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v1.4.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
