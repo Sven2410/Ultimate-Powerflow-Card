@@ -1,0 +1,86 @@
+# ============================================================
+# Ultimate Powerflow Card – Example Configurations
+# ============================================================
+
+# ── Example 1: Grid only (minimal) ──────────────────────────
+type: custom:ultimate-powerflow-card
+grid_power_entity: sensor.grid_power
+household_power_entity: sensor.household_power
+
+---
+
+# ── Example 2: Grid + Solar ──────────────────────────────────
+type: custom:ultimate-powerflow-card
+grid_power_entity: sensor.grid_power
+household_power_entity: sensor.household_power
+solar_power_entity: sensor.solar_power
+solar_enabled: true
+
+---
+
+# ── Example 3: Grid + Solar + Battery ───────────────────────
+type: custom:ultimate-powerflow-card
+grid_power_entity: sensor.grid_power
+household_power_entity: sensor.household_power
+solar_power_entity: sensor.solar_power
+battery_charging_power_entity: sensor.battery_charging_power
+battery_discharging_power_entity: sensor.battery_discharging_power
+solar_enabled: true
+battery_enabled: true
+
+---
+
+# ── Example 4: Full – Grid + Solar + Battery + EV ───────────
+type: custom:ultimate-powerflow-card
+grid_power_entity: sensor.grid_power
+household_power_entity: sensor.household_power
+solar_power_entity: sensor.solar_power
+battery_charging_power_entity: sensor.battery_charging_power
+battery_discharging_power_entity: sensor.battery_discharging_power
+ev_charger_power_entity: sensor.ev_charger_power
+solar_enabled: true
+battery_enabled: true
+ev_charger_enabled: true
+# Optional: custom weather overlays
+weather_entity: weather.home
+
+---
+
+# ── Example 5: Full config with all options ──────────────────
+type: custom:ultimate-powerflow-card
+grid_power_entity: sensor.grid_power
+household_power_entity: sensor.household_power
+solar_power_entity: sensor.solar_power
+battery_charging_power_entity: sensor.battery_charging_power
+battery_discharging_power_entity: sensor.battery_discharging_power
+ev_charger_power_entity: sensor.ev_charger_power
+sun_entity: sun.sun
+weather_entity: weather.home
+solar_enabled: true
+battery_enabled: true
+ev_charger_enabled: true
+image_base_path: /local/ultimate-powerflow/
+animation_speed: normal  # slow | normal | fast
+colors:
+  grid: "#f39c12"
+  solar: "#f1c40f"
+  battery: "#2ecc71"
+  household: "#3498db"
+  ev_charger: "#9b59b6"
+# Optional: manual label positions (percentage of card dimensions)
+label_positions:
+  grid:
+    x: 88
+    y: 72
+  household:
+    x: 62
+    y: 58
+  solar:
+    x: 42
+    y: 18
+  battery:
+    x: 55
+    y: 72
+  ev_charger:
+    x: 16
+    y: 75
