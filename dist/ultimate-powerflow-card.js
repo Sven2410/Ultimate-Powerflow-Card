@@ -1,8 +1,6 @@
 /**
- * Ultimate Powerflow Card v1.2.0
- * - All 8 images embedded (base64)
- * - Labels: plain text only, no boxes
- * - Flow lines follow actual cable paths
+ * Ultimate Powerflow Card v1.2.1
+ * Fix: removed JS syntax error that prevented card from loading.
  */
 
 // ── Embedded images ───────────────────────────────────────
@@ -27,7 +25,7 @@ function pickImage(day, solar, bat, ev) {
 
 // ── Helpers ───────────────────────────────────────────────
 function fmtW(w) {
-  if (w === null || isNaN(w)) return "—";
+  if (w === null || isNaN(w)) return "\u2014";
   const a = Math.abs(w);
   if (a < 1000) return Math.round(a) + " W";
   const k = a / 1000;
@@ -35,7 +33,8 @@ function fmtW(w) {
 }
 function parseVal(s) {
   if (!s || s === "unavailable" || s === "unknown") return null;
-  const n = parseFloat(s); return isNaN(n) ? null : n;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
 }
 function isDay(s) { return !s || s === "above_horizon"; }
 function wxType(c) {
@@ -48,406 +47,401 @@ function wxType(c) {
 
 // ── Weather animations ────────────────────────────────────
 function rainAnim(cv) {
-  const ctx = cv.getContext("2d"); if (!ctx) return ()=>{};
-  const resize = () => { cv.width=cv.offsetWidth||400; cv.height=cv.offsetHeight||225; };
-  resize();
-  const drops = Array.from({length:80}, () => ({
-    x:Math.random()*cv.width, y:Math.random()*cv.height,
-    len:10+Math.random()*20, spd:8+Math.random()*10, op:0.2+Math.random()*0.3
-  }));
-  let id=0;
-  const draw = () => {
+  const ctx = cv.getContext("2d"); if (!ctx) return function(){};
+  cv.width = cv.offsetWidth || 400; cv.height = cv.offsetHeight || 225;
+  const drops = Array.from({length:80}, function() { return {
+    x: Math.random()*cv.width, y: Math.random()*cv.height,
+    len: 10+Math.random()*20, spd: 8+Math.random()*10, op: 0.2+Math.random()*0.3
+  }; });
+  let id = 0;
+  function draw() {
     ctx.clearRect(0,0,cv.width,cv.height);
-    drops.forEach(d=>{
+    drops.forEach(function(d) {
       ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x-1,d.y+d.len);
-      ctx.strokeStyle=`rgba(174,214,241,${d.op})`; ctx.lineWidth=1; ctx.stroke();
-      d.y+=d.spd; if(d.y>cv.height){d.y=-d.len;d.x=Math.random()*cv.width;}
+      ctx.strokeStyle = "rgba(174,214,241,"+d.op+")"; ctx.lineWidth=1; ctx.stroke();
+      d.y += d.spd;
+      if (d.y > cv.height) { d.y = -d.len; d.x = Math.random()*cv.width; }
     });
-    id=requestAnimationFrame(draw);
-  };
-  draw(); return ()=>cancelAnimationFrame(id);
+    id = requestAnimationFrame(draw);
+  }
+  draw();
+  return function() { cancelAnimationFrame(id); };
 }
+
 function snowAnim(cv) {
-  const ctx = cv.getContext("2d"); if (!ctx) return ()=>{};
-  cv.width=cv.offsetWidth||400; cv.height=cv.offsetHeight||225;
-  const flakes = Array.from({length:55}, () => ({
-    x:Math.random()*cv.width, y:Math.random()*cv.height,
-    r:1.5+Math.random()*3, spd:0.8+Math.random()*1.5, op:0.4+Math.random()*0.4
-  }));
-  let id=0;
-  const draw = () => {
+  const ctx = cv.getContext("2d"); if (!ctx) return function(){};
+  cv.width = cv.offsetWidth || 400; cv.height = cv.offsetHeight || 225;
+  const flakes = Array.from({length:55}, function() { return {
+    x: Math.random()*cv.width, y: Math.random()*cv.height,
+    r: 1.5+Math.random()*3, spd: 0.8+Math.random()*1.5, op: 0.4+Math.random()*0.4
+  }; });
+  let id = 0;
+  function draw() {
     ctx.clearRect(0,0,cv.width,cv.height);
-    flakes.forEach(f=>{
+    flakes.forEach(function(f) {
       ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,Math.PI*2);
-      ctx.fillStyle=`rgba(255,255,255,${f.op})`; ctx.fill();
-      f.y+=f.spd; f.x+=Math.sin(f.y/30)*0.4;
-      if(f.y>cv.height){f.y=-f.r*2;f.x=Math.random()*cv.width;}
+      ctx.fillStyle = "rgba(255,255,255,"+f.op+")"; ctx.fill();
+      f.y += f.spd; f.x += Math.sin(f.y/30)*0.4;
+      if (f.y > cv.height) { f.y = -f.r*2; f.x = Math.random()*cv.width; }
     });
-    id=requestAnimationFrame(draw);
-  };
-  draw(); return ()=>cancelAnimationFrame(id);
+    id = requestAnimationFrame(draw);
+  }
+  draw();
+  return function() { cancelAnimationFrame(id); };
 }
 
 // ── Flow calculator ───────────────────────────────────────
 const THR = 5;
 function calcFlows(v) {
-  const s=n=>Math.max(0,n||0);
-  const sol=s(v.solar), bch=s(v.bch), bdis=s(v.bdis), ev=s(v.ev), hs=s(v.house);
-  const load=hs+ev;
-  const s2l=Math.min(sol,load), srem=sol-s2l;
-  const s2b=Math.min(srem,bch), s2g=Math.max(0,srem-s2b);
-  const def=load-s2l, b2l=Math.min(bdis,def), g2l=Math.max(0,def-b2l);
-  const gimp=g2l>1?g2l:Math.max(0,v.grid||0);
-  const gexp=s2g>1?s2g:0;
+  const s = function(n) { return Math.max(0, n || 0); };
+  const sol = s(v.solar), bch = s(v.bch), bdis = s(v.bdis);
+  const ev = s(v.ev), hs = s(v.house);
+  const load = hs + ev;
+  const s2l  = Math.min(sol, load);
+  const srem = sol - s2l;
+  const s2b  = Math.min(srem, bch);
+  const s2g  = Math.max(0, srem - s2b);
+  const def  = load - s2l;
+  const b2l  = Math.min(bdis, def);
+  const g2l  = Math.max(0, def - b2l);
+  const gimp = g2l > 1 ? g2l : Math.max(0, v.grid || 0);
   return {
-    s2h: load>0?s2l*(hs/load):0,
-    s2b, s2g, b2h: load>0?b2l*(hs/load):0,
-    g2h: gimp, h2ev: ev, gimp, gexp
+    s2h:  load > 0 ? s2l * (hs / load) : 0,
+    s2b:  s2b,
+    s2g:  s2g,
+    b2h:  load > 0 ? b2l * (hs / load) : 0,
+    g2h:  gimp,
+    h2ev: ev,
+    gimp: gimp,
+    gexp: s2g > 1 ? s2g : 0
   };
 }
 
-// ── SVG cable paths ───────────────────────────────────────
-// These follow the actual white cable routes visible in the images.
-// Coordinates: x=0-100 (left→right), y=0-100 (top→bottom) of 16:9 card.
+// ── Cable route paths ─────────────────────────────────────
+// Coordinates follow the actual white cables visible in the images.
+// x: 0=left, 100=right  |  y: 0=top, 100=bottom (of the 16:9 card)
 //
-// Component positions (tuned to the reference images):
-//   Solar panels:      x≈48, y≈26
-//   Roof cable exit:   x≈57, y≈50   ← where cable leaves the roof
-//   Meter box (⚡):    x≈57, y≈63
-//   Battery:           x≈51, y≈63
-//   Ground run level:  y≈74
-//   Grid box:          x≈87, y≈67
-//   EV charger pole:   x≈22, y≈70
+//  Solar panels center:   x=48, y=26
+//  Roof/cable exit:       x=57, y=50
+//  Meter box (hub):       x=57, y=63
+//  Battery (wall unit):   x=51, y=63
+//  Ground cable level:    y=75
+//  Grid transformer:      x=87, y=67
+//  EV charger pole:       x=22, y=70
 
-// Build an SVG path string from a list of [x,y] waypoints
-function pts(coords) {
-  return coords.map((c,i)=>i===0?`M${c[0]} ${c[1]]}`:  `L${c[0]} ${c[1]}`).join(" ");
+function buildPath(coords, reversed) {
+  var pts = reversed ? coords.slice().reverse() : coords;
+  return pts.map(function(c, i) {
+    return (i === 0 ? "M" : "L") + c[0] + " " + c[1];
+  }).join(" ");
 }
 
-// Cable route definitions — following the physical cables in the image
-const ROUTES = {
-  // Solar → roof edge → meter box
+var ROUTES = {
   solar_to_meter: [[48,26],[56,50],[57,63]],
-  // Meter box → battery (short horizontal)
   meter_to_bat:   [[57,63],[51,63]],
-  // Meter box → ground → right → grid box
-  meter_to_grid:  [[57,63],[57,74],[87,74],[87,67]],
-  // Meter box → ground → left → EV charger
-  meter_to_ev:    [[57,63],[57,76],[22,76],[22,70]],
+  meter_to_grid:  [[57,63],[57,75],[87,75],[87,67]],
+  meter_to_ev:    [[57,63],[57,76],[22,76],[22,70]]
 };
 
 function makePath(routeKey, power, color, animCls, reversed) {
-  const active = Math.abs(power) >= THR;
-  const coords = ROUTES[routeKey];
-  let d = coords.map((c,i)=> i===0 ? `M${c[0]} ${c[1]}` : `L${c[0]} ${c[1]}`).join(" ");
-  if (reversed) {
-    const rev = [...coords].reverse();
-    d = rev.map((c,i)=> i===0 ? `M${c[0]} ${c[1]}` : `L${c[0]} ${c[1]}`).join(" ");
-  }
-  const cls = active ? animCls : "fl-off";
-  const glow = active ? `filter:drop-shadow(0 0 4px ${color});` : "";
-  return `<path class="${cls}" d="${d}" stroke="${color}" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="${glow}"/>`;
+  var active = Math.abs(power) >= THR;
+  var d = buildPath(ROUTES[routeKey], reversed);
+  var cls = active ? animCls : "fl-off";
+  var glow = active ? "filter:drop-shadow(0 0 4px " + color + ");" : "";
+  return '<path class="' + cls + '" d="' + d + '" stroke="' + color +
+    '" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="' + glow + '"/>';
 }
 
 // ── Default label positions ───────────────────────────────
-// Plain text labels positioned near each component
-const DEF_POS = {
-  grid:  {x:87, y:59},   // above grid box
-  house: {x:68, y:53},   // right side of house
-  solar: {x:35, y:20},   // above solar panels
-  bat:   {x:44, y:57},   // above battery
-  ev:    {x:14, y:63},   // above EV charger
+var DEF_POS = {
+  grid:  {x:87, y:59},
+  house: {x:68, y:53},
+  solar: {x:35, y:20},
+  bat:   {x:44, y:57},
+  ev:    {x:14, y:63}
 };
 
-const DEF_COLORS = {
+var DEF_COLORS = {
   grid:"#f5a623", solar:"#ffd700", battery:"#27ae60", household:"#5dade2", ev:"#a569bd"
 };
 
-// ── Styles — NO boxes, pure text only ────────────────────
-const STYLES = `
-  :host{display:block}
-  ha-card{overflow:hidden;background:#000;border-radius:var(--ha-card-border-radius,12px);padding:0;box-shadow:none}
-  .wrap{position:relative;width:100%;padding-bottom:56.25%;overflow:hidden}
-  .inner{position:absolute;inset:0}
-  .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
-  .svg{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;overflow:visible}
-  .wx{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}
-  .wx canvas{width:100%;height:100%;opacity:.38}
-
-  /* Label: zero background, zero border, pure text */
-  .lbl{
-    position:absolute;
-    transform:translate(-50%,-50%);
-    z-index:5;
-    pointer-events:none;
-    text-align:center;
-    line-height:1.25;
-  }
-  .lbl-name{
-    display:block;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    font-size:10px;
-    font-weight:600;
-    letter-spacing:.07em;
-    text-transform:uppercase;
-    color:rgba(255,255,255,.75);
-    text-shadow:0 0 6px #000,0 0 10px #000,1px 1px 0 #000;
-  }
-  .lbl-val{
-    display:block;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    font-size:14px;
-    font-weight:800;
-    color:#fff;
-    text-shadow:0 0 6px #000,0 0 12px #000,0 0 18px #000,1px 1px 0 #000;
-    white-space:nowrap;
-  }
-  .lbl-val.na{color:rgba(255,255,255,.45);font-size:11px}
-
-  /* Flow line animations */
-  @keyframes fd{to{stroke-dashoffset:-36}}
-  .fl-act {stroke-dasharray:10 7;animation:fd .9s linear infinite}
-  .fl-slow{stroke-dasharray:10 7;animation:fd 1.8s linear infinite}
-  .fl-fast{stroke-dasharray:10 7;animation:fd .45s linear infinite}
-  .fl-off {opacity:.08}
-
-  @media(max-width:500px){
-    .lbl-val{font-size:11px}
-    .lbl-name{font-size:8px}
-  }
-`;
+// ── Styles — no boxes, pure text labels ──────────────────
+var STYLES = [
+  ":host{display:block}",
+  "ha-card{overflow:hidden;background:#000;border-radius:var(--ha-card-border-radius,12px);padding:0;box-shadow:none}",
+  ".wrap{position:relative;width:100%;padding-bottom:56.25%;overflow:hidden}",
+  ".inner{position:absolute;inset:0}",
+  ".bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}",
+  ".svg{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;overflow:visible}",
+  ".wx{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:2}",
+  ".wx canvas{width:100%;height:100%;opacity:.38}",
+  ".lbl{position:absolute;transform:translate(-50%,-50%);z-index:5;pointer-events:none;text-align:center;line-height:1.25}",
+  ".lbl-name{display:block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:rgba(255,255,255,.8);text-shadow:0 0 6px #000,0 0 10px #000,1px 1px 0 #000}",
+  ".lbl-val{display:block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:15px;font-weight:800;color:#fff;text-shadow:0 0 6px #000,0 0 14px #000,0 0 20px #000,1px 1px 0 #000;white-space:nowrap}",
+  ".lbl-val.na{color:rgba(255,255,255,.4);font-size:11px}",
+  "@keyframes fd{to{stroke-dashoffset:-36}}",
+  ".fl-act{stroke-dasharray:10 7;animation:fd .9s linear infinite}",
+  ".fl-slow{stroke-dasharray:10 7;animation:fd 1.8s linear infinite}",
+  ".fl-fast{stroke-dasharray:10 7;animation:fd .45s linear infinite}",
+  ".fl-off{opacity:.08}",
+  "@media(max-width:500px){.lbl-val{font-size:11px}.lbl-name{font-size:8px}}"
+].join("");
 
 // ── Editor styles ─────────────────────────────────────────
-const ED = `
-  :host{display:block}
-  .sec{font-weight:700;font-size:11px;letter-spacing:.07em;text-transform:uppercase;
-        color:var(--secondary-text-color);margin:16px 0 8px;padding-bottom:3px;
-        border-bottom:1px solid var(--divider-color,rgba(255,255,255,.1))}
-  .sec:first-child{margin-top:0}
-  .row{display:flex;gap:8px;margin-bottom:8px}
-  .row>*{flex:1}
-  .trow{display:flex;align-items:center;justify-content:space-between;padding:5px 0}
-  .tlbl{font-size:14px;color:var(--primary-text-color)}
-  .cr{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
-  .ci{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--secondary-text-color)}
-  .ci input[type=color]{width:40px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px}
-  .sel{width:100%;background:var(--card-background-color,#1c1c2e);color:var(--primary-text-color);
-        border:1px solid var(--divider-color,rgba(255,255,255,.2));border-radius:4px;padding:8px;font-size:14px;margin-top:4px}
-  .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
-`;
+var ED_STYLES = [
+  ":host{display:block}",
+  ".sec{font-weight:700;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--secondary-text-color);margin:16px 0 8px;padding-bottom:3px;border-bottom:1px solid var(--divider-color,rgba(255,255,255,.1))}",
+  ".sec:first-child{margin-top:0}",
+  ".row{display:flex;gap:8px;margin-bottom:8px}",
+  ".row>*{flex:1}",
+  ".trow{display:flex;align-items:center;justify-content:space-between;padding:5px 0}",
+  ".tlbl{font-size:14px;color:var(--primary-text-color)}",
+  ".cr{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}",
+  ".ci{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--secondary-text-color)}",
+  ".ci input[type=color]{width:40px;height:28px;border:none;background:none;cursor:pointer;border-radius:6px}",
+  ".sel{width:100%;background:var(--card-background-color,#1c1c2e);color:var(--primary-text-color);border:1px solid var(--divider-color,rgba(255,255,255,.2));border-radius:4px;padding:8px;font-size:14px;margin-top:4px}",
+  ".pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}"
+].join("");
 
 // ── Main Card ─────────────────────────────────────────────
-class UltimatePowerflowCard extends HTMLElement {
-  constructor() {
-    super(); this.attachShadow({mode:"open"});
-    this._cfg=null; this._hass=null; this._stopWx=null; this._wxType="none"; this._ro=null;
+var UltimatePowerflowCard = (function() {
+  function Card() {
+    var root = this.attachShadow({mode:"open"});
+    this._cfg = null; this._hass = null;
+    this._stopWx = null; this._wxType = "none"; this._ro = null;
   }
-  static getConfigElement(){return document.createElement("ultimate-powerflow-card-editor")}
-  static getStubConfig(){return{grid_power_entity:"sensor.grid_power",household_power_entity:"sensor.household_power"}}
+  Card.prototype = Object.create(HTMLElement.prototype);
+  Card.prototype.constructor = Card;
 
-  setConfig(c) {
-    if(!c.grid_power_entity)      throw new Error("grid_power_entity required");
-    if(!c.household_power_entity) throw new Error("household_power_entity required");
-    this._cfg={animation_speed:"normal",solar_enabled:false,battery_enabled:false,ev_charger_enabled:false,...c};
+  Card.getConfigElement = function() { return document.createElement("ultimate-powerflow-card-editor"); };
+  Card.getStubConfig    = function() { return {grid_power_entity:"sensor.grid_power",household_power_entity:"sensor.household_power"}; };
+
+  Card.prototype.setConfig = function(c) {
+    if (!c.grid_power_entity)      throw new Error("grid_power_entity required");
+    if (!c.household_power_entity) throw new Error("household_power_entity required");
+    this._cfg = Object.assign({animation_speed:"normal",solar_enabled:false,battery_enabled:false,ev_charger_enabled:false}, c);
     this._render();
-  }
-  set hass(h){ this._hass=h; if(this._cfg)this._render(); }
+  };
 
-  connectedCallback(){
-    this._ro=new ResizeObserver(()=>{this._stopWx?.();this._stopWx=null;this._startWx();});
+  Object.defineProperty(Card.prototype, "hass", {
+    set: function(h) { this._hass = h; if (this._cfg) this._render(); }
+  });
+
+  Card.prototype.connectedCallback = function() {
+    var self = this;
+    this._ro = new ResizeObserver(function() { if(self._stopWx){self._stopWx();self._stopWx=null;} self._startWx(); });
     this._ro.observe(this);
-  }
-  disconnectedCallback(){this._stopWx?.();this._ro?.disconnect();}
+  };
+  Card.prototype.disconnectedCallback = function() {
+    if (this._stopWx) this._stopWx();
+    if (this._ro) this._ro.disconnect();
+  };
 
-  _s(e){return this._hass?.states?.[e]?.state}
-  _colors(){return{...DEF_COLORS,...(this._cfg?.colors??{})}}
-  _pos(k){return this._cfg?.label_positions?.[k]??DEF_POS[k]}
-  _animCls(){
-    const sp=this._cfg?.animation_speed??"normal";
-    return sp==="slow"?"fl-slow":sp==="fast"?"fl-fast":"fl-act";
-  }
+  Card.prototype._s = function(e) { return this._hass && this._hass.states && this._hass.states[e] ? this._hass.states[e].state : undefined; };
+  Card.prototype._colors = function() { return Object.assign({}, DEF_COLORS, this._cfg.colors || {}); };
+  Card.prototype._pos = function(k) { return (this._cfg.label_positions && this._cfg.label_positions[k]) || DEF_POS[k]; };
+  Card.prototype._animCls = function() {
+    var sp = this._cfg.animation_speed || "normal";
+    return sp === "slow" ? "fl-slow" : sp === "fast" ? "fl-fast" : "fl-act";
+  };
 
-  _render(){
-    if(!this._cfg)return;
-    const cfg=this._cfg, col=this._colors(), ac=this._animCls();
+  Card.prototype._render = function() {
+    if (!this._cfg) return;
+    var cfg = this._cfg, col = this._colors(), ac = this._animCls(), self = this;
 
-    // Raw values
-    const gv  = parseVal(this._s(cfg.grid_power_entity));
-    const hv  = parseVal(this._s(cfg.household_power_entity));
-    const sv  = cfg.solar_enabled      ? parseVal(this._s(cfg.solar_power_entity))                : null;
-    const bch = cfg.battery_enabled    ? parseVal(this._s(cfg.battery_charging_power_entity))     : null;
-    const bdis= cfg.battery_enabled    ? parseVal(this._s(cfg.battery_discharging_power_entity))  : null;
-    const ev  = cfg.ev_charger_enabled ? parseVal(this._s(cfg.ev_charger_power_entity))           : null;
+    var gv   = parseVal(this._s(cfg.grid_power_entity));
+    var hv   = parseVal(this._s(cfg.household_power_entity));
+    var sv   = cfg.solar_enabled      ? parseVal(this._s(cfg.solar_power_entity))                : null;
+    var bch  = cfg.battery_enabled    ? parseVal(this._s(cfg.battery_charging_power_entity))     : null;
+    var bdis = cfg.battery_enabled    ? parseVal(this._s(cfg.battery_discharging_power_entity))  : null;
+    var ev   = cfg.ev_charger_enabled ? parseVal(this._s(cfg.ev_charger_power_entity))           : null;
 
-    const flows = calcFlows({solar:sv??0,bch:bch??0,bdis:bdis??0,ev:ev??0,house:hv??0,grid:gv??0});
+    var flows = calcFlows({solar:sv||0, bch:bch||0, bdis:bdis||0, ev:ev||0, house:hv||0, grid:gv||0});
 
-    // Image
-    const img = pickImage(
-      isDay(this._s(cfg.sun_entity??"sun.sun")),
-      !!cfg.solar_enabled, !!cfg.battery_enabled, !!cfg.ev_charger_enabled
-    );
+    var img = pickImage(isDay(this._s(cfg.sun_entity || "sun.sun")), !!cfg.solar_enabled, !!cfg.battery_enabled, !!cfg.ev_charger_enabled);
 
-    // Weather
-    const wx = wxType(this._s(cfg.weather_entity));
-    const wxHtml = wx==="rain"
-      ? `<div class="wx"><canvas class="rxc"></canvas></div>`
-      : wx==="snow"
-      ? `<div class="wx"><canvas class="sxc"></canvas></div>` : "";
+    var wx = wxType(this._s(cfg.weather_entity));
+    var wxHtml = wx === "rain"
+      ? '<div class="wx"><canvas class="rxc"></canvas></div>'
+      : wx === "snow"
+      ? '<div class="wx"><canvas class="sxc"></canvas></div>' : "";
 
-    // SVG lines — following cable routes
-    const lines = [
-      // Grid ↔ meter box (along ground)
-      makePath("meter_to_grid", flows.gimp,  col.grid,    ac, flows.gimp >= THR),
-      // Solar → roof → meter (only if solar enabled)
-      cfg.solar_enabled ? makePath("solar_to_meter", flows.s2h + flows.s2b + flows.s2g, col.solar, ac, false) : "",
-      // Battery ↔ meter (short)
-      cfg.battery_enabled ? makePath("meter_to_bat", flows.s2b + flows.b2h, col.battery, ac, flows.b2h > flows.s2b) : "",
-      // EV ← meter (along ground left)
-      cfg.ev_charger_enabled ? makePath("meter_to_ev", flows.h2ev, col.ev, ac, false) : "",
+    var lines = [
+      makePath("meter_to_grid",  flows.gimp,  col.grid,    ac, false),
+      cfg.solar_enabled      ? makePath("solar_to_meter", flows.s2h + flows.s2b + flows.s2g, col.solar,   ac, false) : "",
+      cfg.battery_enabled    ? makePath("meter_to_bat",   flows.s2b + flows.b2h,             col.battery, ac, flows.b2h > flows.s2b) : "",
+      cfg.ev_charger_enabled ? makePath("meter_to_ev",    flows.h2ev,                        col.ev,      ac, false) : ""
     ].join("");
 
-    // Battery display value: charging positive, discharging shown too
-    const batDisp = (bch??0) > 0 ? bch : bdis !== null ? bdis : null;
+    var batDisp = (bch || 0) > 0 ? bch : bdis !== null ? bdis : null;
 
-    // Labels — pure text, no box
-    const lbl = (key, name, val) => {
-      const p = this._pos(key);
-      const dv = val===null ? "—" : fmtW(val);
-      return `<div class="lbl" style="left:${p.x}%;top:${p.y}%">
-        <span class="lbl-name">${name}</span>
-        <span class="lbl-val ${val===null?"na":""}">${dv}</span>
-      </div>`;
-    };
-
-    const labels = [
-      lbl("grid",  "Grid",    gv!==null?Math.abs(gv):null),
-      lbl("house", "House",   hv),
-      cfg.solar_enabled      ? lbl("solar","Solar",  sv)       : "",
-      cfg.battery_enabled    ? lbl("bat",  "Battery",batDisp)  : "",
-      cfg.ev_charger_enabled ? lbl("ev",   "EV",     ev)       : "",
-    ].join("");
-
-    this.shadowRoot.innerHTML = `<style>${STYLES}</style>
-      <ha-card>
-        <div class="wrap"><div class="inner">
-          <img class="bg" src="${img}" alt=""/>
-          ${wxHtml}
-          <svg class="svg" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>
-          ${labels}
-        </div></div>
-      </ha-card>`;
-
-    if(wx!==this._wxType){this._stopWx?.();this._stopWx=null;this._wxType=wx;}
-    this._startWx();
-  }
-
-  _startWx(){
-    if(this._wxType==="rain"){
-      const c=this.shadowRoot?.querySelector(".rxc");
-      if(c&&!this._stopWx)this._stopWx=rainAnim(c);
-    }else if(this._wxType==="snow"){
-      const c=this.shadowRoot?.querySelector(".sxc");
-      if(c&&!this._stopWx)this._stopWx=snowAnim(c);
+    function lbl(key, name, val) {
+      var p  = self._pos(key);
+      var dv = val === null ? "\u2014" : fmtW(val);
+      var na = val === null ? " na" : "";
+      return '<div class="lbl" style="left:' + p.x + '%;top:' + p.y + '%">' +
+        '<span class="lbl-name">' + name + '</span>' +
+        '<span class="lbl-val' + na + '">' + dv + '</span></div>';
     }
-  }
 
-  getCardSize(){return 4;}
-}
+    var labels = [
+      lbl("grid",  "Grid",    gv !== null ? Math.abs(gv) : null),
+      lbl("house", "House",   hv),
+      cfg.solar_enabled      ? lbl("solar", "Solar",   sv)      : "",
+      cfg.battery_enabled    ? lbl("bat",   "Battery", batDisp) : "",
+      cfg.ev_charger_enabled ? lbl("ev",    "EV",      ev)      : ""
+    ].join("");
+
+    this.shadowRoot.innerHTML =
+      '<style>' + STYLES + '</style>' +
+      '<ha-card><div class="wrap"><div class="inner">' +
+        '<img class="bg" src="' + img + '" alt=""/>' +
+        wxHtml +
+        '<svg class="svg" viewBox="0 0 100 100" preserveAspectRatio="none">' + lines + '</svg>' +
+        labels +
+      '</div></div></ha-card>';
+
+    if (wx !== this._wxType) { if(this._stopWx){this._stopWx();this._stopWx=null;} this._wxType = wx; }
+    this._startWx();
+  };
+
+  Card.prototype._startWx = function() {
+    var sr = this.shadowRoot;
+    if (this._wxType === "rain") {
+      var c = sr && sr.querySelector(".rxc");
+      if (c && !this._stopWx) this._stopWx = rainAnim(c);
+    } else if (this._wxType === "snow") {
+      var c2 = sr && sr.querySelector(".sxc");
+      if (c2 && !this._stopWx) this._stopWx = snowAnim(c2);
+    }
+  };
+
+  Card.prototype.getCardSize = function() { return 4; };
+  return Card;
+})();
 
 // ── Editor ────────────────────────────────────────────────
-class UltimatePowerflowCardEditor extends HTMLElement {
-  constructor(){super();this.attachShadow({mode:"open"});this._cfg={};this._hass=null;}
-  set hass(h){this._hass=h;this.shadowRoot.querySelectorAll("ha-entity-picker").forEach(e=>e.hass=h);}
-  setConfig(c){this._cfg={...c};this._render();}
-  _fire(){this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:this._cfg},bubbles:true,composed:true}));}
-  _set(key,val){
-    const k=key.split(".");
-    if(k.length===3&&k[0]==="lp"){
-      this._cfg={...this._cfg,label_positions:{...(this._cfg.label_positions??{}),
-        [k[1]]:{...(this._cfg.label_positions?.[k[1]]??{}),[k[2]]:parseFloat(val)}}};
-    }else if(k.length===2){
-      this._cfg={...this._cfg,[k[0]]:{...(this._cfg[k[0]]??{}),[k[1]]:val}};
-    }else{
-      this._cfg={...this._cfg,[key]:val};
+var UltimatePowerflowCardEditor = (function() {
+  function Editor() {
+    this.attachShadow({mode:"open"});
+    this._cfg = {}; this._hass = null;
+  }
+  Editor.prototype = Object.create(HTMLElement.prototype);
+  Editor.prototype.constructor = Editor;
+
+  Object.defineProperty(Editor.prototype, "hass", {
+    set: function(h) {
+      this._hass = h;
+      this.shadowRoot.querySelectorAll("ha-entity-picker").forEach(function(e){e.hass=h;});
     }
-    this._fire();this._render();
-  }
-  _render(){
-    const c=this._cfg,col=c.colors??{},pos=c.label_positions??{};
-    this.shadowRoot.innerHTML=`<style>${ED}</style>
-      <div class="sec">⚡ Core Entities</div>
-      <div class="row"><ha-entity-picker label="Grid Power *" value="${c.grid_power_entity??""}" data-key="grid_power_entity" allow-custom-entity></ha-entity-picker></div>
-      <div class="row"><ha-entity-picker label="Household Power *" value="${c.household_power_entity??""}" data-key="household_power_entity" allow-custom-entity></ha-entity-picker></div>
-      <div class="row"><ha-entity-picker label="Sun Entity" value="${c.sun_entity??"sun.sun"}" data-key="sun_entity" allow-custom-entity></ha-entity-picker></div>
+  });
 
-      <div class="sec">🔌 Optional Devices</div>
-      <div class="trow"><span class="tlbl">☀️ Solar Panels</span><ha-switch data-key="solar_enabled" ${c.solar_enabled?"checked":""}></ha-switch></div>
-      ${c.solar_enabled?`<div class="row"><ha-entity-picker label="Solar Power" value="${c.solar_power_entity??""}" data-key="solar_power_entity" allow-custom-entity></ha-entity-picker></div>`:""}
-      <div class="trow"><span class="tlbl">🔋 Battery</span><ha-switch data-key="battery_enabled" ${c.battery_enabled?"checked":""}></ha-switch></div>
-      ${c.battery_enabled?`
-        <div class="row"><ha-entity-picker label="Charging Power" value="${c.battery_charging_power_entity??""}" data-key="battery_charging_power_entity" allow-custom-entity></ha-entity-picker></div>
-        <div class="row"><ha-entity-picker label="Discharging Power" value="${c.battery_discharging_power_entity??""}" data-key="battery_discharging_power_entity" allow-custom-entity></ha-entity-picker></div>`:""}
-      <div class="trow"><span class="tlbl">🚗 EV Charger</span><ha-switch data-key="ev_charger_enabled" ${c.ev_charger_enabled?"checked":""}></ha-switch></div>
-      ${c.ev_charger_enabled?`<div class="row"><ha-entity-picker label="EV Power" value="${c.ev_charger_power_entity??""}" data-key="ev_charger_power_entity" allow-custom-entity></ha-entity-picker></div>`:""}
-      <div class="row"><ha-entity-picker label="Weather Entity (optional)" value="${c.weather_entity??""}" data-key="weather_entity" allow-custom-entity></ha-entity-picker></div>
+  Editor.prototype.setConfig = function(c) { this._cfg = Object.assign({}, c); this._render(); };
 
-      <div class="sec">🎨 Appearance</div>
-      <label style="font-size:13px;color:var(--secondary-text-color)">Animation Speed</label>
-      <select class="sel" data-key="animation_speed">
-        <option value="slow" ${c.animation_speed==="slow"?"selected":""}>Slow</option>
-        <option value="normal" ${(!c.animation_speed||c.animation_speed==="normal")?"selected":""}>Normal</option>
-        <option value="fast" ${c.animation_speed==="fast"?"selected":""}>Fast</option>
-      </select>
-      <br/><br/>
-      <label style="font-size:13px;color:var(--secondary-text-color)">Flow Colors</label>
-      <div class="cr">
-        <div class="ci"><input type="color" value="${col.grid??"#f5a623"}" data-key="colors.grid"/><span>Grid</span></div>
-        <div class="ci"><input type="color" value="${col.solar??"#ffd700"}" data-key="colors.solar"/><span>Solar</span></div>
-        <div class="ci"><input type="color" value="${col.battery??"#27ae60"}" data-key="colors.battery"/><span>Battery</span></div>
-        <div class="ci"><input type="color" value="${col.household??"#5dade2"}" data-key="colors.household"/><span>House</span></div>
-        ${c.ev_charger_enabled?`<div class="ci"><input type="color" value="${col.ev??"#a569bd"}" data-key="colors.ev"/><span>EV</span></div>`:""}
-      </div>
+  Editor.prototype._fire = function() {
+    this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:this._cfg},bubbles:true,composed:true}));
+  };
 
-      <div class="sec">🔧 Label Positions (% — optioneel)</div>
-      <div class="pgrid">
-        <ha-textfield label="Grid X"    type="number" value="${pos.grid?.x??""}"  data-key="lp.grid.x"></ha-textfield>
-        <ha-textfield label="Grid Y"    type="number" value="${pos.grid?.y??""}"  data-key="lp.grid.y"></ha-textfield>
-        <ha-textfield label="House X"   type="number" value="${pos.house?.x??""}" data-key="lp.house.x"></ha-textfield>
-        <ha-textfield label="House Y"   type="number" value="${pos.house?.y??""}" data-key="lp.house.y"></ha-textfield>
-        ${c.solar_enabled?`<ha-textfield label="Solar X" type="number" value="${pos.solar?.x??""}" data-key="lp.solar.x"></ha-textfield><ha-textfield label="Solar Y" type="number" value="${pos.solar?.y??""}" data-key="lp.solar.y"></ha-textfield>`:""}
-        ${c.battery_enabled?`<ha-textfield label="Battery X" type="number" value="${pos.bat?.x??""}" data-key="lp.bat.x"></ha-textfield><ha-textfield label="Battery Y" type="number" value="${pos.bat?.y??""}" data-key="lp.bat.y"></ha-textfield>`:""}
-        ${c.ev_charger_enabled?`<ha-textfield label="EV X" type="number" value="${pos.ev?.x??""}" data-key="lp.ev.x"></ha-textfield><ha-textfield label="EV Y" type="number" value="${pos.ev?.y??""}" data-key="lp.ev.y"></ha-textfield>`:""}
-      </div>`;
+  Editor.prototype._set = function(key, val) {
+    var k = key.split(".");
+    if (k.length === 3 && k[0] === "lp") {
+      var lp = Object.assign({}, this._cfg.label_positions || {});
+      lp[k[1]] = Object.assign({}, lp[k[1]] || {});
+      lp[k[1]][k[2]] = parseFloat(val);
+      this._cfg = Object.assign({}, this._cfg, {label_positions: lp});
+    } else if (k.length === 2) {
+      var parent = Object.assign({}, this._cfg[k[0]] || {});
+      parent[k[1]] = val;
+      this._cfg = Object.assign({}, this._cfg);
+      this._cfg[k[0]] = parent;
+    } else {
+      this._cfg = Object.assign({}, this._cfg);
+      this._cfg[key] = val;
+    }
+    this._fire(); this._render();
+  };
 
-    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach(el=>{
-      el.hass=this._hass;
-      el.addEventListener("value-changed",e=>{if(el.dataset.key)this._set(el.dataset.key,e.detail.value);});
+  Editor.prototype._render = function() {
+    var c = this._cfg, col = c.colors || {}, pos = c.label_positions || {}, self = this;
+    this.shadowRoot.innerHTML = '<style>' + ED_STYLES + '</style>' +
+      '<div class="sec">\u26a1 Core Entities</div>' +
+      '<div class="row"><ha-entity-picker label="Grid Power *" value="'+(c.grid_power_entity||'')+'" data-key="grid_power_entity" allow-custom-entity></ha-entity-picker></div>'+
+      '<div class="row"><ha-entity-picker label="Household Power *" value="'+(c.household_power_entity||'')+'" data-key="household_power_entity" allow-custom-entity></ha-entity-picker></div>'+
+      '<div class="row"><ha-entity-picker label="Sun Entity" value="'+(c.sun_entity||'sun.sun')+'" data-key="sun_entity" allow-custom-entity></ha-entity-picker></div>'+
+      '<div class="sec">\uD83D\uDD0C Optional Devices</div>'+
+      '<div class="trow"><span class="tlbl">\u2600\uFE0F Solar Panels</span><ha-switch data-key="solar_enabled"'+(c.solar_enabled?' checked':'')+'></ha-switch></div>'+
+      (c.solar_enabled?'<div class="row"><ha-entity-picker label="Solar Power" value="'+(c.solar_power_entity||'')+'" data-key="solar_power_entity" allow-custom-entity></ha-entity-picker></div>':'')+
+      '<div class="trow"><span class="tlbl">\uD83D\uDD0B Battery</span><ha-switch data-key="battery_enabled"'+(c.battery_enabled?' checked':'')+'></ha-switch></div>'+
+      (c.battery_enabled?
+        '<div class="row"><ha-entity-picker label="Charging Power" value="'+(c.battery_charging_power_entity||'')+'" data-key="battery_charging_power_entity" allow-custom-entity></ha-entity-picker></div>'+
+        '<div class="row"><ha-entity-picker label="Discharging Power" value="'+(c.battery_discharging_power_entity||'')+'" data-key="battery_discharging_power_entity" allow-custom-entity></ha-entity-picker></div>':'')+
+      '<div class="trow"><span class="tlbl">\uD83D\uDE97 EV Charger</span><ha-switch data-key="ev_charger_enabled"'+(c.ev_charger_enabled?' checked':'')+'></ha-switch></div>'+
+      (c.ev_charger_enabled?'<div class="row"><ha-entity-picker label="EV Power" value="'+(c.ev_charger_power_entity||'')+'" data-key="ev_charger_power_entity" allow-custom-entity></ha-entity-picker></div>':'')+
+      '<div class="row"><ha-entity-picker label="Weather Entity (optional)" value="'+(c.weather_entity||'')+'" data-key="weather_entity" allow-custom-entity></ha-entity-picker></div>'+
+      '<div class="sec">\uD83C\uDFA8 Appearance</div>'+
+      '<label style="font-size:13px;color:var(--secondary-text-color)">Animation Speed</label>'+
+      '<select class="sel" data-key="animation_speed">'+
+        '<option value="slow"'+(c.animation_speed==="slow"?" selected":"")+'>Slow</option>'+
+        '<option value="normal"'+(!c.animation_speed||c.animation_speed==="normal"?" selected":"")+'>Normal</option>'+
+        '<option value="fast"'+(c.animation_speed==="fast"?" selected":"")+'>Fast</option>'+
+      '</select><br/><br/>'+
+      '<label style="font-size:13px;color:var(--secondary-text-color)">Flow Colors</label>'+
+      '<div class="cr">'+
+        '<div class="ci"><input type="color" value="'+(col.grid||"#f5a623")+'" data-key="colors.grid"/><span>Grid</span></div>'+
+        '<div class="ci"><input type="color" value="'+(col.solar||"#ffd700")+'" data-key="colors.solar"/><span>Solar</span></div>'+
+        '<div class="ci"><input type="color" value="'+(col.battery||"#27ae60")+'" data-key="colors.battery"/><span>Battery</span></div>'+
+        '<div class="ci"><input type="color" value="'+(col.household||"#5dade2")+'" data-key="colors.household"/><span>House</span></div>'+
+        (c.ev_charger_enabled?'<div class="ci"><input type="color" value="'+(col.ev||"#a569bd")+'" data-key="colors.ev"/><span>EV</span></div>':'')+
+      '</div>'+
+      '<div class="sec">\uD83D\uDD27 Label Positions (% \u2014 optioneel)</div>'+
+      '<div class="pgrid">'+
+        '<ha-textfield label="Grid X"  type="number" value="'+(pos.grid  && pos.grid.x  !== undefined ? pos.grid.x  : "")+'" data-key="lp.grid.x"></ha-textfield>'+
+        '<ha-textfield label="Grid Y"  type="number" value="'+(pos.grid  && pos.grid.y  !== undefined ? pos.grid.y  : "")+'" data-key="lp.grid.y"></ha-textfield>'+
+        '<ha-textfield label="House X" type="number" value="'+(pos.house && pos.house.x !== undefined ? pos.house.x : "")+'" data-key="lp.house.x"></ha-textfield>'+
+        '<ha-textfield label="House Y" type="number" value="'+(pos.house && pos.house.y !== undefined ? pos.house.y : "")+'" data-key="lp.house.y"></ha-textfield>'+
+        (c.solar_enabled?
+          '<ha-textfield label="Solar X" type="number" value="'+(pos.solar&&pos.solar.x!==undefined?pos.solar.x:"")+'" data-key="lp.solar.x"></ha-textfield>'+
+          '<ha-textfield label="Solar Y" type="number" value="'+(pos.solar&&pos.solar.y!==undefined?pos.solar.y:"")+'" data-key="lp.solar.y"></ha-textfield>':'')+
+        (c.battery_enabled?
+          '<ha-textfield label="Battery X" type="number" value="'+(pos.bat&&pos.bat.x!==undefined?pos.bat.x:"")+'" data-key="lp.bat.x"></ha-textfield>'+
+          '<ha-textfield label="Battery Y" type="number" value="'+(pos.bat&&pos.bat.y!==undefined?pos.bat.y:"")+'" data-key="lp.bat.y"></ha-textfield>':'')+
+        (c.ev_charger_enabled?
+          '<ha-textfield label="EV X" type="number" value="'+(pos.ev&&pos.ev.x!==undefined?pos.ev.x:"")+'" data-key="lp.ev.x"></ha-textfield>'+
+          '<ha-textfield label="EV Y" type="number" value="'+(pos.ev&&pos.ev.y!==undefined?pos.ev.y:"")+'" data-key="lp.ev.y"></ha-textfield>':'')+
+      '</div>';
+
+    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach(function(el) {
+      el.hass = self._hass;
+      el.addEventListener("value-changed", function(e) { if(el.dataset.key) self._set(el.dataset.key, e.detail.value); });
     });
-    this.shadowRoot.querySelectorAll("ha-switch").forEach(el=>
-      el.addEventListener("change",e=>{if(el.dataset.key)this._set(el.dataset.key,e.target.checked);})
-    );
-    this.shadowRoot.querySelectorAll("ha-textfield").forEach(el=>
-      el.addEventListener("input",e=>{if(el.dataset.key)this._set(el.dataset.key,e.target.value);})
-    );
-    this.shadowRoot.querySelectorAll("select").forEach(el=>
-      el.addEventListener("change",e=>{if(el.dataset.key)this._set(el.dataset.key,e.target.value);})
-    );
-    this.shadowRoot.querySelectorAll("input[type=color]").forEach(el=>
-      el.addEventListener("input",e=>{if(el.dataset.key)this._set(el.dataset.key,e.target.value);})
-    );
-  }
-}
+    this.shadowRoot.querySelectorAll("ha-switch").forEach(function(el) {
+      el.addEventListener("change", function(e) { if(el.dataset.key) self._set(el.dataset.key, e.target.checked); });
+    });
+    this.shadowRoot.querySelectorAll("ha-textfield").forEach(function(el) {
+      el.addEventListener("input", function(e) { if(el.dataset.key) self._set(el.dataset.key, e.target.value); });
+    });
+    this.shadowRoot.querySelectorAll("select").forEach(function(el) {
+      el.addEventListener("change", function(e) { if(el.dataset.key) self._set(el.dataset.key, e.target.value); });
+    });
+    this.shadowRoot.querySelectorAll("input[type=color]").forEach(function(el) {
+      el.addEventListener("input", function(e) { if(el.dataset.key) self._set(el.dataset.key, e.target.value); });
+    });
+  };
 
-if(!customElements.get("ultimate-powerflow-card"))
-  customElements.define("ultimate-powerflow-card",UltimatePowerflowCard);
-if(!customElements.get("ultimate-powerflow-card-editor"))
-  customElements.define("ultimate-powerflow-card-editor",UltimatePowerflowCardEditor);
+  return Editor;
+})();
 
-window.customCards=window.customCards??[];
-if(!window.customCards.find(c=>c.type==="ultimate-powerflow-card"))
-  window.customCards.push({type:"ultimate-powerflow-card",name:"Ultimate Powerflow Card",
-    description:"Energy flow visualization over a house image.",preview:true});
+if (!customElements.get("ultimate-powerflow-card"))
+  customElements.define("ultimate-powerflow-card", UltimatePowerflowCard);
+if (!customElements.get("ultimate-powerflow-card-editor"))
+  customElements.define("ultimate-powerflow-card-editor", UltimatePowerflowCardEditor);
 
-console.info("%c ULTIMATE-POWERFLOW-CARD %c v1.2.0 ",
+window.customCards = window.customCards || [];
+if (!window.customCards.find(function(c){return c.type==="ultimate-powerflow-card";}))
+  window.customCards.push({type:"ultimate-powerflow-card",name:"Ultimate Powerflow Card",description:"Energy flow over a house image.",preview:true});
+
+console.info(
+  "%c ULTIMATE-POWERFLOW-CARD %c v1.2.1 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
-  "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0");
+  "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
+);
