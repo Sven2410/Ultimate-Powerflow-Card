@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v1.8.0
+ * Ultimate Powerflow Card v1.9.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -381,9 +381,10 @@ class UltimatePowerflowCardEditor extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
-    // Re-assign hass to all pickers (covers the case where _render
-    // already ran but hass wasn't available yet at that moment)
-    this._bindEvents();
+    // Assign hass to all existing pickers whenever it becomes available
+    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
+      el.hass = h;
+    });
   }
 
   setConfig(config) {
@@ -392,37 +393,39 @@ class UltimatePowerflowCardEditor extends HTMLElement {
   }
 
   _fire() {
-    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: this._config },
+      bubbles: true,
+      composed: true,
+    }));
   }
 
-  _set(key, value, skipRender) {
+  // Only used for toggle switches — these DO need a re-render to show/hide pickers
+  _setAndRender(key, value) {
+    this._config = { ...this._config, [key]: value };
+    this._fire();
+    this._render();
+  }
+
+  // Used for entity pickers and text fields — no re-render needed
+  _setOnly(key, value) {
     const parts = key.split(".");
-    if (parts.length === 3 && parts[0] === "lp") {
-      const lp = { ...(this._config.label_positions || {}) };
-      lp[parts[1]] = { ...(lp[parts[1]] || {}), [parts[2]]: parseFloat(value) };
-      this._config = { ...this._config, label_positions: lp };
-    } else if (parts.length === 2) {
+    if (parts.length === 2) {
       this._config = { ...this._config, [parts[0]]: { ...(this._config[parts[0]] || {}), [parts[1]]: value } };
     } else {
       this._config = { ...this._config, [key]: value };
     }
     this._fire();
-    if (!skipRender) this._render();
   }
 
   _render() {
-    const c   = this._config;
-    const col = c.colors || {};
-    const pos = c.label_positions || {};
+    const c = this._config;
 
     const ep = (label, key, val) =>
       `<div class="row"><ha-entity-picker label="${label}" value="${val || ""}" data-key="${key}" allow-custom-entity></ha-entity-picker></div>`;
 
     const sw = (label, key) =>
       `<div class="trow"><span class="tlbl">${label}</span><ha-switch data-key="${key}"${c[key] ? " checked" : ""}></ha-switch></div>`;
-
-    const tf = (label, key, val) =>
-      `<ha-textfield label="${label}" type="number" value="${val !== undefined ? val : ""}" data-key="${key}"></ha-textfield>`;
 
     this.shadowRoot.innerHTML =
       `<style>${EDITOR_CSS}</style>` +
@@ -435,68 +438,43 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       (c.solar_enabled ? ep("Solar Power", "solar_power_entity", c.solar_power_entity) : "") +
       sw("&#128267; Battery", "battery_enabled") +
       (c.battery_enabled
-        ? ep("Charging Power",   "battery_charging_power_entity",    c.battery_charging_power_entity) +
-          ep("Discharging Power","battery_discharging_power_entity",  c.battery_discharging_power_entity)
+        ? ep("Charging Power",    "battery_charging_power_entity",   c.battery_charging_power_entity) +
+          ep("Discharging Power", "battery_discharging_power_entity", c.battery_discharging_power_entity)
         : "") +
       sw("&#128663; EV Charger", "ev_charger_enabled") +
       (c.ev_charger_enabled ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity) : "") +
-      ep("Weather Entity (optional)", "weather_entity", c.weather_entity) +
-      
-      "";
+      ep("Weather Entity (optional)", "weather_entity", c.weather_entity);
 
-    // Schedule event binding after custom elements have had time to upgrade
-    setTimeout(() => this._bindEvents(), 0);
-  }
+    // Bind switches immediately — they are native-ish elements
+    this.shadowRoot.querySelectorAll("ha-switch").forEach((el) => {
+      el.addEventListener("change", (e) => {
+        if (el.dataset.key) this._setAndRender(el.dataset.key, e.target.checked);
+      });
+    });
 
-  _bindEvents() {
-    const sr = this.shadowRoot;
-    if (!sr) return;
-    sr.querySelectorAll("ha-entity-picker").forEach((el) => {
-      // Always (re-)assign hass so the picker is functional
-      el.hass = this._hass;
-      // Only add listener once per element instance
-      if (!el._upfc_bound) {
-        el._upfc_bound = true;
-        el.addEventListener("value-changed", (e) => {
-          if (el.dataset.key) this._set(el.dataset.key, e.detail.value);
-        });
-      }
-    });
-    sr.querySelectorAll("ha-switch").forEach((el) => {
-      if (!el._upfc_bound) {
-        el._upfc_bound = true;
-        el.addEventListener("change", (e) => {
-          if (el.dataset.key) this._set(el.dataset.key, e.target.checked);
-        });
-      }
-    });
-    sr.querySelectorAll("ha-textfield").forEach((el) => {
-      if (!el._upfc_bound) {
-        el._upfc_bound = true;
-        el.addEventListener("input", (e) => {
-          if (el.dataset.key) this._set(el.dataset.key, e.target.value, true);
-        });
-      }
-    });
-    sr.querySelectorAll("select").forEach((el) => {
-      if (!el._upfc_bound) {
-        el._upfc_bound = true;
-        el.addEventListener("change", (e) => {
-          if (el.dataset.key) this._set(el.dataset.key, e.target.value);
-        });
-      }
-    });
-    sr.querySelectorAll("input[type=color]").forEach((el) => {
-      if (!el._upfc_bound) {
-        el._upfc_bound = true;
-        el.addEventListener("input", (e) => {
-          if (el.dataset.key) this._set(el.dataset.key, e.target.value, true);
-        });
-      }
+    // Bind entity pickers after a frame so they have time to upgrade,
+    // then assign hass and listen for selections.
+    // We also retry after 200ms as a safety net for slow environments.
+    const bindPickers = () => {
+      this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
+        el.hass = this._hass;
+        if (!el._upfc_bound) {
+          el._upfc_bound = true;
+          el.addEventListener("value-changed", (e) => {
+            const val = e.detail && e.detail.value !== undefined ? e.detail.value : e.target.value;
+            if (el.dataset.key) this._setOnly(el.dataset.key, val);
+          });
+        }
+      });
+    };
+
+    requestAnimationFrame(() => {
+      bindPickers();
+      // Retry after 200ms in case rAF wasn't enough (e.g. slow HA load)
+      setTimeout(bindPickers, 200);
     });
   }
 }
-
 // ── Register ──────────────────────────────────────────────
 if (!customElements.get("ultimate-powerflow-card"))
   customElements.define("ultimate-powerflow-card", UltimatePowerflowCard);
@@ -514,7 +492,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v1.8.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v1.9.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
