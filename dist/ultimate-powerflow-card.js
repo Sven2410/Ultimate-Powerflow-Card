@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v1.9.0
+ * Ultimate Powerflow Card v2.0.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -375,16 +375,31 @@ class UltimatePowerflowCardEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._config = {};
-    this._hass   = null;
+    this._config  = {};
+    this._hass    = null;
+    this._rendered = false;
   }
 
+  // HA may call set hass before OR after setConfig — handle both cases.
   set hass(h) {
     this._hass = h;
-    // Assign hass to all existing pickers whenever it becomes available
-    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
-      el.hass = h;
-    });
+
+    if (!this._rendered) {
+      // setConfig hasn't run yet, or ran without hass — nothing to do yet
+      return;
+    }
+
+    const pickers = this.shadowRoot.querySelectorAll("ha-entity-picker");
+
+    if (pickers.length === 0) {
+      // Pickers don't exist yet (hass arrived before/during first render)
+      // Re-render now that we have hass so pickers initialise properly
+      this._render();
+      return;
+    }
+
+    // Pickers already exist — just update hass on each one
+    pickers.forEach((el) => { el.hass = h; });
   }
 
   setConfig(config) {
@@ -400,21 +415,16 @@ class UltimatePowerflowCardEditor extends HTMLElement {
     }));
   }
 
-  // Only used for toggle switches — these DO need a re-render to show/hide pickers
+  // Toggles need a re-render (to show/hide picker rows)
   _setAndRender(key, value) {
     this._config = { ...this._config, [key]: value };
     this._fire();
     this._render();
   }
 
-  // Used for entity pickers and text fields — no re-render needed
+  // Entity pickers & text fields: save + fire, never re-render
   _setOnly(key, value) {
-    const parts = key.split(".");
-    if (parts.length === 2) {
-      this._config = { ...this._config, [parts[0]]: { ...(this._config[parts[0]] || {}), [parts[1]]: value } };
-    } else {
-      this._config = { ...this._config, [key]: value };
-    }
+    this._config = { ...this._config, [key]: value };
     this._fire();
   }
 
@@ -425,53 +435,59 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       `<div class="row"><ha-entity-picker label="${label}" value="${val || ""}" data-key="${key}" allow-custom-entity></ha-entity-picker></div>`;
 
     const sw = (label, key) =>
-      `<div class="trow"><span class="tlbl">${label}</span><ha-switch data-key="${key}"${c[key] ? " checked" : ""}></ha-switch></div>`;
+      `<div class="trow"><span class="tlbl">${label}</span>` +
+      `<ha-switch data-key="${key}"${c[key] ? " checked" : ""}></ha-switch></div>`;
 
     this.shadowRoot.innerHTML =
       `<style>${EDITOR_CSS}</style>` +
       `<div class="sec">&#9889; Core Entities</div>` +
-      ep("Grid Power *",       "grid_power_entity",      c.grid_power_entity) +
-      ep("Household Power *",  "household_power_entity", c.household_power_entity) +
-      ep("Sun Entity",         "sun_entity",             c.sun_entity || "sun.sun") +
+      ep("Grid Power *",      "grid_power_entity",      c.grid_power_entity) +
+      ep("Household Power *", "household_power_entity", c.household_power_entity) +
+      ep("Sun Entity",        "sun_entity",             c.sun_entity || "sun.sun") +
       `<div class="sec">&#128268; Optional Devices</div>` +
       sw("&#9728;&#65039; Solar Panels", "solar_enabled") +
-      (c.solar_enabled ? ep("Solar Power", "solar_power_entity", c.solar_power_entity) : "") +
+      (c.solar_enabled
+        ? ep("Solar Power", "solar_power_entity", c.solar_power_entity)
+        : "") +
       sw("&#128267; Battery", "battery_enabled") +
       (c.battery_enabled
         ? ep("Charging Power",    "battery_charging_power_entity",   c.battery_charging_power_entity) +
           ep("Discharging Power", "battery_discharging_power_entity", c.battery_discharging_power_entity)
         : "") +
       sw("&#128663; EV Charger", "ev_charger_enabled") +
-      (c.ev_charger_enabled ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity) : "") +
+      (c.ev_charger_enabled
+        ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity)
+        : "") +
       ep("Weather Entity (optional)", "weather_entity", c.weather_entity);
 
-    // Bind switches immediately — they are native-ish elements
+    this._rendered = true;
+
+    // Bind switches right away — they are always available
     this.shadowRoot.querySelectorAll("ha-switch").forEach((el) => {
       el.addEventListener("change", (e) => {
         if (el.dataset.key) this._setAndRender(el.dataset.key, e.target.checked);
       });
     });
 
-    // Bind entity pickers after a frame so they have time to upgrade,
-    // then assign hass and listen for selections.
-    // We also retry after 200ms as a safety net for slow environments.
-    const bindPickers = () => {
-      this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
-        el.hass = this._hass;
-        if (!el._upfc_bound) {
-          el._upfc_bound = true;
-          el.addEventListener("value-changed", (e) => {
-            const val = e.detail && e.detail.value !== undefined ? e.detail.value : e.target.value;
-            if (el.dataset.key) this._setOnly(el.dataset.key, val);
-          });
-        }
-      });
-    };
+    // Bind entity pickers — needs hass to be present first
+    this._bindPickers();
+  }
 
-    requestAnimationFrame(() => {
-      bindPickers();
-      // Retry after 200ms in case rAF wasn't enough (e.g. slow HA load)
-      setTimeout(bindPickers, 200);
+  _bindPickers() {
+    const sr = this.shadowRoot;
+    if (!sr || !this._hass) return; // wait until hass is available
+
+    sr.querySelectorAll("ha-entity-picker").forEach((el) => {
+      el.hass = this._hass;
+      if (!el._upfc_bound) {
+        el._upfc_bound = true;
+        el.addEventListener("value-changed", (e) => {
+          const val = (e.detail && e.detail.value !== undefined)
+            ? e.detail.value
+            : e.target.value;
+          if (el.dataset.key) this._setOnly(el.dataset.key, val);
+        });
+      }
     });
   }
 }
@@ -492,7 +508,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v1.9.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
