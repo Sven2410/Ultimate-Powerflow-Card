@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v2.0.0
+ * Ultimate Powerflow Card v2.0.1
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -375,31 +375,17 @@ class UltimatePowerflowCardEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._config  = {};
-    this._hass    = null;
+    this._config   = {};
+    this._hass     = null;
     this._rendered = false;
   }
 
-  // HA may call set hass before OR after setConfig — handle both cases.
   set hass(h) {
     this._hass = h;
-
-    if (!this._rendered) {
-      // setConfig hasn't run yet, or ran without hass — nothing to do yet
-      return;
-    }
-
-    const pickers = this.shadowRoot.querySelectorAll("ha-entity-picker");
-
-    if (pickers.length === 0) {
-      // Pickers don't exist yet (hass arrived before/during first render)
-      // Re-render now that we have hass so pickers initialise properly
-      this._render();
-      return;
-    }
-
-    // Pickers already exist — just update hass on each one
-    pickers.forEach((el) => { el.hass = h; });
+    // Always (re-)bind pickers when hass arrives or updates.
+    // If _render already ran without hass the pickers are invisible;
+    // assigning hass here makes them appear and attaches listeners.
+    if (this._rendered) this._bindPickers();
   }
 
   setConfig(config) {
@@ -415,15 +401,15 @@ class UltimatePowerflowCardEditor extends HTMLElement {
     }));
   }
 
-  // Toggles need a re-render (to show/hide picker rows)
-  _setAndRender(key, value) {
+  // Toggles — need re-render to show/hide picker rows
+  _toggle(key, value) {
     this._config = { ...this._config, [key]: value };
     this._fire();
     this._render();
   }
 
-  // Entity pickers & text fields: save + fire, never re-render
-  _setOnly(key, value) {
+  // Entity pickers — save + fire, no re-render (keeps picker open)
+  _pick(key, value) {
     this._config = { ...this._config, [key]: value };
     this._fire();
   }
@@ -432,11 +418,15 @@ class UltimatePowerflowCardEditor extends HTMLElement {
     const c = this._config;
 
     const ep = (label, key, val) =>
-      `<div class="row"><ha-entity-picker label="${label}" value="${val || ""}" data-key="${key}" allow-custom-entity></ha-entity-picker></div>`;
+      `<div class="row">` +
+      `<ha-entity-picker label="${label}" value="${val || ""}" ` +
+      `data-key="${key}" allow-custom-entity></ha-entity-picker>` +
+      `</div>`;
 
     const sw = (label, key) =>
       `<div class="trow"><span class="tlbl">${label}</span>` +
-      `<ha-switch data-key="${key}"${c[key] ? " checked" : ""}></ha-switch></div>`;
+      `<ha-switch data-key="${key}"${c[key] ? " checked" : ""}></ha-switch>` +
+      `</div>`;
 
     this.shadowRoot.innerHTML =
       `<style>${EDITOR_CSS}</style>` +
@@ -462,30 +452,32 @@ class UltimatePowerflowCardEditor extends HTMLElement {
 
     this._rendered = true;
 
-    // Bind switches right away — they are always available
+    // Bind switches immediately
     this.shadowRoot.querySelectorAll("ha-switch").forEach((el) => {
       el.addEventListener("change", (e) => {
-        if (el.dataset.key) this._setAndRender(el.dataset.key, e.target.checked);
+        if (el.dataset.key) this._toggle(el.dataset.key, e.target.checked);
       });
     });
 
-    // Bind entity pickers — needs hass to be present first
+    // Bind pickers if hass already available; if not, hass setter will do it
     this._bindPickers();
   }
 
   _bindPickers() {
-    const sr = this.shadowRoot;
-    if (!sr || !this._hass) return; // wait until hass is available
+    if (!this._hass) return; // hass not available yet — hass setter will retry
 
-    sr.querySelectorAll("ha-entity-picker").forEach((el) => {
+    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
+      // Assign hass so the picker renders and shows suggestions
       el.hass = this._hass;
+
+      // Attach listener once per element instance
       if (!el._upfc_bound) {
         el._upfc_bound = true;
         el.addEventListener("value-changed", (e) => {
-          const val = (e.detail && e.detail.value !== undefined)
+          const val = e.detail && e.detail.value !== undefined
             ? e.detail.value
             : e.target.value;
-          if (el.dataset.key) this._setOnly(el.dataset.key, val);
+          if (el.dataset.key) this._pick(el.dataset.key, val);
         });
       }
     });
@@ -508,7 +500,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.1 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
