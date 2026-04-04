@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v1.7.0
+ * Ultimate Powerflow Card v1.8.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -381,7 +381,9 @@ class UltimatePowerflowCardEditor extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
-    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => (el.hass = h));
+    // Re-assign hass to all pickers (covers the case where _render
+    // already ran but hass wasn't available yet at that moment)
+    this._bindEvents();
   }
 
   setConfig(config) {
@@ -442,23 +444,55 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       
       "";
 
-    // Bind events
-    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
+    // Schedule event binding after custom elements have had time to upgrade
+    setTimeout(() => this._bindEvents(), 0);
+  }
+
+  _bindEvents() {
+    const sr = this.shadowRoot;
+    if (!sr) return;
+    sr.querySelectorAll("ha-entity-picker").forEach((el) => {
+      // Always (re-)assign hass so the picker is functional
       el.hass = this._hass;
-      el.addEventListener("value-changed", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.detail.value); });
+      // Only add listener once per element instance
+      if (!el._upfc_bound) {
+        el._upfc_bound = true;
+        el.addEventListener("value-changed", (e) => {
+          if (el.dataset.key) this._set(el.dataset.key, e.detail.value);
+        });
+      }
     });
-    this.shadowRoot.querySelectorAll("ha-switch").forEach((el) => {
-      el.addEventListener("change", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.checked); });
+    sr.querySelectorAll("ha-switch").forEach((el) => {
+      if (!el._upfc_bound) {
+        el._upfc_bound = true;
+        el.addEventListener("change", (e) => {
+          if (el.dataset.key) this._set(el.dataset.key, e.target.checked);
+        });
+      }
     });
-    this.shadowRoot.querySelectorAll("ha-textfield").forEach((el) => {
-      // skipRender=true so typing doesn't kick focus out by re-rendering
-      el.addEventListener("input", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value, true); });
+    sr.querySelectorAll("ha-textfield").forEach((el) => {
+      if (!el._upfc_bound) {
+        el._upfc_bound = true;
+        el.addEventListener("input", (e) => {
+          if (el.dataset.key) this._set(el.dataset.key, e.target.value, true);
+        });
+      }
     });
-    this.shadowRoot.querySelectorAll("select").forEach((el) => {
-      el.addEventListener("change", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value); });
+    sr.querySelectorAll("select").forEach((el) => {
+      if (!el._upfc_bound) {
+        el._upfc_bound = true;
+        el.addEventListener("change", (e) => {
+          if (el.dataset.key) this._set(el.dataset.key, e.target.value);
+        });
+      }
     });
-    this.shadowRoot.querySelectorAll("input[type=color]").forEach((el) => {
-      el.addEventListener("input", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value, true); });
+    sr.querySelectorAll("input[type=color]").forEach((el) => {
+      if (!el._upfc_bound) {
+        el._upfc_bound = true;
+        el.addEventListener("input", (e) => {
+          if (el.dataset.key) this._set(el.dataset.key, e.target.value, true);
+        });
+      }
     });
   }
 }
@@ -480,7 +514,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v1.7.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v1.8.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
