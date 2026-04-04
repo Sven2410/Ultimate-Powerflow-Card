@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v1.4.0
+ * Ultimate Powerflow Card v1.5.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -178,11 +178,11 @@ function buildSvgPath(routeKey, power, color, animCls, reversed) {
 
 // ── Default positions & colors ────────────────────────────
 const DEF_POS = {
-  grid:  { x: 91, y: 60 },   // far right, near grid transformer
-  house: { x: 73, y: 57 },   // right of meter/inverter box
-  solar: { x: 58, y: 40 },   // center of solar panels on roof
-  bat:   { x: 55, y: 80 },   // below battery unit
-  ev:    { x: 17, y: 57 },   // left, near EV charger pole
+  grid:  { x: 90, y: 85 },
+  house: { x: 67, y: 75 },
+  solar: { x: 50, y: 53 },
+  bat:   { x: 60, y: 95 },
+  ev:    { x: 11, y: 75 },
 };
 
 const DEF_COLORS = {
@@ -441,7 +441,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
   }
 
-  _set(key, value) {
+  _set(key, value, skipRender) {
     const parts = key.split(".");
     if (parts.length === 3 && parts[0] === "lp") {
       const lp = { ...(this._config.label_positions || {}) };
@@ -453,7 +453,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       this._config = { ...this._config, [key]: value };
     }
     this._fire();
-    this._render();
+    if (!skipRender) this._render();
   }
 
   _render() {
@@ -531,13 +531,14 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       el.addEventListener("change", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.checked); });
     });
     this.shadowRoot.querySelectorAll("ha-textfield").forEach((el) => {
-      el.addEventListener("input", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value); });
+      // skipRender=true so typing doesn't kick focus out by re-rendering
+      el.addEventListener("input", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value, true); });
     });
     this.shadowRoot.querySelectorAll("select").forEach((el) => {
       el.addEventListener("change", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value); });
     });
     this.shadowRoot.querySelectorAll("input[type=color]").forEach((el) => {
-      el.addEventListener("input", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value); });
+      el.addEventListener("input", (e) => { if (el.dataset.key) this._set(el.dataset.key, e.target.value, true); });
     });
   }
 }
@@ -559,7 +560,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v1.4.0 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v1.5.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
