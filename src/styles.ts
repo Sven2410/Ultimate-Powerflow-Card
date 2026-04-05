@@ -88,7 +88,7 @@ export const cardStyles = css`
     pointer-events: none;
   }
 
-  /* ── Energy flow lines ── */
+  /* ── Energy flow lines – basis ────────────────────────────── */
   .upfc-flow-line {
     stroke-linecap: round;
     fill: none;
@@ -103,29 +103,33 @@ export const cardStyles = css`
 
   .upfc-flow-line-active {
     opacity: 1;
-    filter: drop-shadow(0 0 4px currentColor);
+    /* stroke-dasharray wordt gezet door de animatie-klasse */
+    stroke-dasharray: 4 8;
   }
 
-  /* ── Animated dash for active flow ── */
-  @keyframes flowDash {
+  /* ── Bewegende neon dots animatie ─────────────────────────── */
+  /*
+   * stroke-dasharray: 4 8  → korte streepjes (4px) met gaten (8px)
+   * @keyframes verschuift stroke-dashoffset naar -24 (= 4+8+4+8 / cycle)
+   * De inline drop-shadow filter zorgt voor het neon-glow effect
+   * animation-direction: reverse keert richting om bij teruglevering
+   */
+  @keyframes upfc-flow-dash {
     to {
-      stroke-dashoffset: -48;
+      stroke-dashoffset: -24;
     }
   }
 
   .upfc-flow-animated {
-    stroke-dasharray: 12 8;
-    animation: flowDash 1s linear infinite;
+    animation: upfc-flow-dash 1.5s linear infinite;
   }
 
   .upfc-flow-animated-slow {
-    stroke-dasharray: 12 8;
-    animation: flowDash 2s linear infinite;
+    animation: upfc-flow-dash 3s linear infinite;
   }
 
   .upfc-flow-animated-fast {
-    stroke-dasharray: 12 8;
-    animation: flowDash 0.5s linear infinite;
+    animation: upfc-flow-dash 0.8s linear infinite;
   }
 
   /* ── Labels ── */

@@ -17,7 +17,7 @@ import { styleMap } from "lit/directives/style-map.js";
 import { cardStyles } from "./styles";
 import { formatPower, parseEntityValue } from "./helpers/format";
 import { resolveImageFilename, isDaytime } from "./helpers/image-resolver";
-import { calculateFlows, isActive, FLOW_THRESHOLD } from "./helpers/flow-calculator";
+import { calculateFlows, FLOW_THRESHOLD } from "./helpers/flow-calculator";
 import {
   getOverlayType,
   animateRain,
@@ -230,7 +230,14 @@ export class UltimatePowerflowCard extends LitElement {
     const cfg = this._config;
     const EPSILON = FLOW_THRESHOLD;
 
-    // Helper to build a path between two anchor points with a slight curve
+    /**
+     * Render a single animated bezier flow line between two anchor points.
+     *
+     * FIX 1: animation-direction: reverse → keert de richting om bij teruglevering
+     *         (was: stroke-dashoffset: 0, wat geen effect had)
+     * FIX 2: dubbele drop-shadow voor sterkere neon glow
+     * FIX 3: stroke-width verhoogd van 2.5 naar 3
+     */
     const line = (
       from: { x: number; y: number },
       to: { x: number; y: number },
@@ -239,33 +246,39 @@ export class UltimatePowerflowCard extends LitElement {
       reversed = false
     ) => {
       const active = Math.abs(power) >= EPSILON;
+
+      // CSS classes: basis + actief/inactief + animatie-snelheidsklasse
       const cls = active
         ? `upfc-flow-line upfc-flow-line-active ${animClass}`
         : "upfc-flow-line upfc-flow-line-inactive";
 
-      // Use SVG viewBox coordinates (0–100)
+      // SVG viewBox coördinaten (0–100)
       const x1 = from.x;
       const y1 = from.y;
       const x2 = to.x;
       const y2 = to.y;
 
-      // Simple cubic bezier control points
+      // Cubic bezier control points voor lichte bocht in de lijn
       const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
-      const cx1 = mx;
       const cy1 = y1;
-      const cx2 = mx;
       const cy2 = y2;
+      const d = `M ${x1} ${y1} C ${mx} ${cy1}, ${mx} ${cy2}, ${x2} ${y2}`;
 
-      const d = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
-      const style = `stroke: ${color}; filter: ${active ? `drop-shadow(0 0 4px ${color})` : "none"};`;
-      const dashOffset = reversed ? "stroke-dashoffset: 0" : "";
+      // FIX 1: animation-direction: reverse keert de dots-richting om bij export/teruglevering
+      //        Dit vervangt de oude "stroke-dashoffset: 0" die geen effect had
+      const animationDirection = active && reversed ? "animation-direction: reverse;" : "";
 
+      // FIX 2: dubbele drop-shadow = sterkere, meer zichtbare neon glow
+      const glowFilter = active
+        ? `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})`
+        : "none";
+
+      // FIX 3: stroke-width 3 (was 2.5)
       return html`<path
         class="${cls}"
         d="${d}"
-        style="${style} ${dashOffset}"
-        stroke-width="2.5"
+        style="stroke: ${color}; filter: ${glowFilter}; ${animationDirection}"
+        stroke-width="3"
       />`;
     };
 
@@ -276,29 +289,35 @@ export class UltimatePowerflowCard extends LitElement {
     const ev = ANCHORS.ev_charger;
 
     return html`
-      <!-- Grid → House -->
+      <!-- Grid → House (import) -->
       ${line(grid, house, flows.grid_import, colors.grid)}
-      <!-- House → Grid (export) -->
+
+      <!-- House → Grid (export / teruglevering) — reversed=true zodat dots de goede kant op gaan -->
       ${flows.grid_export >= EPSILON
         ? line(house, grid, flows.grid_export, colors.solar, true)
         : nothing}
+
       <!-- Solar → House -->
       ${cfg.solar_enabled
         ? line(solar, house, flows.solar_to_house, colors.solar)
         : nothing}
-      <!-- Solar → Battery -->
+
+      <!-- Solar → Battery (opladen) -->
       ${cfg.solar_enabled && cfg.battery_enabled
         ? line(solar, battery, flows.solar_to_battery, colors.solar)
         : nothing}
-      <!-- Solar → Grid export (direct) -->
+
+      <!-- Solar → Grid (directe export van solar) -->
       ${cfg.solar_enabled && flows.solar_to_grid >= EPSILON
-        ? line(solar, grid, flows.solar_to_grid, colors.solar)
+        ? line(solar, grid, flows.solar_to_grid, colors.solar, true)
         : nothing}
-      <!-- Battery → House -->
+
+      <!-- Battery → House (ontladen) -->
       ${cfg.battery_enabled
         ? line(battery, house, flows.battery_to_house, colors.battery)
         : nothing}
-      <!-- House → EV -->
+
+      <!-- House → EV Charger -->
       ${cfg.ev_charger_enabled
         ? line(house, ev, flows.house_to_ev, colors.ev_charger)
         : nothing}
@@ -352,7 +371,7 @@ export class UltimatePowerflowCard extends LitElement {
     const cfg = this._config;
     const imageSrc = this._resolveImage();
 
-    // Weather overlay
+    // Weather overlay canvas
     const overlayHtml =
       this._overlayType === "rain"
         ? html`<div class="upfc-weather-overlay">
@@ -364,7 +383,7 @@ export class UltimatePowerflowCard extends LitElement {
           </div>`
         : nothing;
 
-    // Raw sensor states for labels (null = unavailable)
+    // Ruwe sensorwaarden voor de labels (null = unavailable)
     const gridVal = parseEntityValue(this._getState(cfg.grid_power_entity));
     const houseVal = parseEntityValue(this._getState(cfg.household_power_entity));
     const solarVal = cfg.solar_enabled
@@ -379,14 +398,14 @@ export class UltimatePowerflowCard extends LitElement {
       ? parseEntityValue(this._getState(cfg.ev_charger_power_entity))
       : null;
 
-    // Determine if grid is importing or exporting for label icon
+    // Grid icoon: pijl omhoog bij teruglevering
     const gridIcon = (gridVal ?? 0) < 0 ? "⚡↑" : "⚡";
 
     return html`
       <ha-card>
         <div class="upfc-wrapper">
           <div class="upfc-inner">
-            <!-- Background image -->
+            <!-- Achtergrondafbeelding -->
             ${this._imageError
               ? html`<div class="upfc-bg-placeholder">
                   <span class="icon">🏠</span>
@@ -401,10 +420,10 @@ export class UltimatePowerflowCard extends LitElement {
                   @load="${() => (this._imageError = false)}"
                 />`}
 
-            <!-- Weather overlay -->
+            <!-- Weer overlay -->
             ${overlayHtml}
 
-            <!-- SVG flow lines -->
+            <!-- SVG stroomlijnen overlay -->
             <svg
               class="upfc-svg-overlay"
               viewBox="0 0 100 100"
