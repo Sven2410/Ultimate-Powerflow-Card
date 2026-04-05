@@ -73,10 +73,20 @@ function isDayTime(s) {
 //  EV charger pole:     x≈22  y≈70
 
 const ROUTES = {
-  solar_to_meter: [[48,26],[56,50],[57,63]],
-  meter_to_bat:   [[57,63],[51,63]],
-  meter_to_grid:  [[57,63],[57,75],[87,75],[87,67]],
-  meter_to_ev:    [[57,63],[57,76],[22,76],[22,70]],
+  // Coordinates are % of card width (x) and % of card height (y).
+  // The house is rendered in 3D perspective: ground cables run diagonally,
+  // NOT horizontally. y increases slightly as x moves right (perspective).
+  //
+  //  Solar panel cable exit (roof): x≈54  y≈43
+  //  Meter / hub (wall box ⚡):     x≈57  y≈65
+  //  Battery (wall box):            x≈51  y≈65
+  //  House base (ground level):     x≈57  y≈69
+  //  Grid transformer:              x≈86  y≈65  (base y≈71)
+  //  EV charger pole:               x≈22  y≈67  (base y≈71)
+  solar_to_meter: [[54,43],[57,53],[57,65]],   // panels → roof exit → meter box
+  meter_to_bat:   [[57,65],[51,65]],            // meter → battery (wall-mounted, same height)
+  meter_to_grid:  [[57,65],[57,69],[86,71],[86,65]], // meter → wall base → diagonal ground → transformer
+  meter_to_ev:    [[57,65],[57,69],[22,71],[22,67]], // meter → wall base → diagonal ground left → EV pole
 };
 
 // Flow lines removed by user request
