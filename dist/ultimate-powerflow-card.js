@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v2.0.3
+ * Ultimate Powerflow Card v2.2.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -59,75 +59,7 @@ function isDayTime(s) {
   return !s || s === "above_horizon";
 }
 
-function getWxType(c) {
-  if (!c) return "none";
-  const l = c.toLowerCase();
-  if (l === "rainy" || l === "pouring" || l === "lightning-rainy") return "rain";
-  if (l === "snowy" || l === "snowy-rainy" || l === "hail") return "snow";
-  return "none";
-}
 
-// ── Weather canvas animations ─────────────────────────────
-function startRain(canvas) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return () => {};
-  canvas.width  = canvas.offsetWidth  || 400;
-  canvas.height = canvas.offsetHeight || 225;
-  const drops = Array.from({ length: 80 }, () => ({
-    x: Math.random() * canvas.width,
-    y: Math.random() * canvas.height,
-    len: 10 + Math.random() * 20,
-    spd: 8  + Math.random() * 10,
-    op:  0.2 + Math.random() * 0.3,
-  }));
-  let rafId = 0;
-  const draw = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const d of drops) {
-      ctx.beginPath();
-      ctx.moveTo(d.x, d.y);
-      ctx.lineTo(d.x - 1, d.y + d.len);
-      ctx.strokeStyle = `rgba(174,214,241,${d.op})`;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      d.y += d.spd;
-      if (d.y > canvas.height) { d.y = -d.len; d.x = Math.random() * canvas.width; }
-    }
-    rafId = requestAnimationFrame(draw);
-  };
-  draw();
-  return () => cancelAnimationFrame(rafId);
-}
-
-function startSnow(canvas) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return () => {};
-  canvas.width  = canvas.offsetWidth  || 400;
-  canvas.height = canvas.offsetHeight || 225;
-  const flakes = Array.from({ length: 55 }, () => ({
-    x:   Math.random() * canvas.width,
-    y:   Math.random() * canvas.height,
-    r:   1.5 + Math.random() * 3,
-    spd: 0.8 + Math.random() * 1.5,
-    op:  0.4 + Math.random() * 0.4,
-  }));
-  let rafId = 0;
-  const draw = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const f of flakes) {
-      ctx.beginPath();
-      ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${f.op})`;
-      ctx.fill();
-      f.y += f.spd;
-      f.x += Math.sin(f.y / 30) * 0.4;
-      if (f.y > canvas.height) { f.y = -f.r * 2; f.x = Math.random() * canvas.width; }
-    }
-    rafId = requestAnimationFrame(draw);
-  };
-  draw();
-  return () => cancelAnimationFrame(rafId);
-}
 
 // x = 0-100 (left→right), y = 0-100 (top→bottom) of the 16:9 card.
 // These follow the white physical cables visible in the house images.
@@ -169,10 +101,6 @@ const CARD_CSS = `
   .wrap { position: relative; width: 100%; padding-bottom: 56.25%; overflow: hidden; }
   .inner { position: absolute; inset: 0; }
   .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-  .wx { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
-  .wx canvas { width: 100%; height: 100%; opacity: .38; }
-
-  /* Pure text labels — zero background, zero border */
   .lbl { position: absolute; transform: translate(-50%, -50%); z-index: 5; pointer-events: none; text-align: center; line-height: 1.3; }
   .lbl-name {
     display: block;
@@ -188,9 +116,6 @@ const CARD_CSS = `
     text-shadow: 0 0 6px #000, 0 0 14px #000, 0 0 22px #000, 1px 1px 0 #000;
   }
   .lbl-val.na { color: rgba(255,255,255,.4); font-size: 11px; }
-
-  @keyframes fd { to { stroke-dashoffset: -36; } }
-  .fl-off  { opacity: .08; }
 
   @media (max-width: 500px) {
     .lbl-val  { font-size: 11px; }
@@ -218,8 +143,6 @@ const EDITOR_CSS = `
 // ── Main Card element ─────────────────────────────────────
 class UltimatePowerflowCard extends HTMLElement {
 
-  static get properties() { return {}; }
-
   static getConfigElement() {
     return document.createElement("ultimate-powerflow-card-editor");
   }
@@ -233,25 +156,23 @@ class UltimatePowerflowCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config   = null;
     this._hass     = null;
-    this._stopWx   = null;
-    this._wxType   = "none";
+    this._domBuilt = false;
+    this._lastImg  = null;
     this._ro       = null;
-    this._domBuilt = false;   // true after first full DOM build
-    this._lastImg  = null;    // track last image src
   }
 
   setConfig(config) {
     if (!config.grid_power_entity)      throw new Error("ultimate-powerflow-card: grid_power_entity is required");
     if (!config.household_power_entity) throw new Error("ultimate-powerflow-card: household_power_entity is required");
     this._config = {
-      sun_entity:        "sun.sun",
-      animation_speed:   "normal",
-      solar_enabled:     false,
-      battery_enabled:   false,
+      sun_entity:         "sun.sun",
+      solar_enabled:      false,
+      battery_enabled:    false,
       ev_charger_enabled: false,
       ...config,
     };
-    this._render();
+    this._domBuilt = false;
+    this._update();
   }
 
   set hass(hass) {
@@ -260,21 +181,15 @@ class UltimatePowerflowCard extends HTMLElement {
   }
 
   connectedCallback() {
-    this._ro = new ResizeObserver(() => {
-      if (this._stopWx) { this._stopWx(); this._stopWx = null; }
-      this._startWeather();
-    });
+    this._ro = new ResizeObserver(() => this._update());
     this._ro.observe(this);
   }
 
   disconnectedCallback() {
-    if (this._stopWx) this._stopWx();
-    if (this._ro)    this._ro.disconnect();
+    if (this._ro) this._ro.disconnect();
   }
 
   getCardSize() { return 4; }
-
-  // ── Private helpers ───────────────────────────────────
 
   _stateOf(entityId) {
     if (!entityId || !this._hass) return undefined;
@@ -282,63 +197,28 @@ class UltimatePowerflowCard extends HTMLElement {
     return e ? e.state : undefined;
   }
 
-  _colors() {
-    return { ...DEF_COLORS, ...(this._config.colors || {}) };
-  }
-
   _pos(key) {
     return (this._config.label_positions && this._config.label_positions[key]) || DEF_POS[key];
   }
 
-
-  _label(key, name, value) {
-    const p  = this._pos(key);
-    const dv = value === null ? "—" : fmtW(value);
-    const na = value === null ? " na" : "";
-    return `<div class="lbl" style="left:${p.x}%;top:${p.y}%">` +
-           `<span class="lbl-name">${name}</span>` +
-           `<span class="lbl-val${na}">${dv}</span>` +
-           `</div>`;
-  }
-
-  // Called from setConfig — always does a full DOM rebuild
-  _render() {
-    if (!this._config) return;
-    this._domBuilt = false; // force full rebuild
-    this._update();
-  }
-
-  // Called every hass update — smart: only rebuilds DOM when structure changes
   _update() {
     if (!this._config) return;
     const cfg = this._config;
     const sr  = this.shadowRoot;
 
-    // Current image key
+    // Resolve current background image (day/night only via sun.sun)
     const img = pickImage(
       isDayTime(this._stateOf(cfg.sun_entity || "sun.sun")),
       !!cfg.solar_enabled, !!cfg.battery_enabled, !!cfg.ev_charger_enabled
     );
 
-    // Current weather type
-    const wx = getWxType(this._stateOf(cfg.weather_entity));
-
-    const needFullRebuild = !this._domBuilt || this._lastImg !== img;
-
-    if (needFullRebuild) {
-      // ── Full DOM build ─────────────────────────────────
-      const wxHtml = wx === "rain"
-        ? `<div class="wx"><canvas class="rxc"></canvas></div>`
-        : wx === "snow"
-        ? `<div class="wx"><canvas class="sxc"></canvas></div>`
-        : "";
-
+    // Rebuild DOM only when image changes or first render
+    if (!this._domBuilt || this._lastImg !== img) {
       sr.innerHTML =
         `<style>${CARD_CSS}</style>` +
         `<ha-card>` +
           `<div class="wrap"><div class="inner">` +
             `<img class="bg" src="${img}" alt=""/>` +
-            wxHtml +
             `<div class="lbl" data-lbl="grid"  style="left:${this._pos("grid").x}%;top:${this._pos("grid").y}%"><span class="lbl-name">Grid</span><span class="lbl-val"></span></div>` +
             `<div class="lbl" data-lbl="house" style="left:${this._pos("house").x}%;top:${this._pos("house").y}%"><span class="lbl-name">Thuis</span><span class="lbl-val"></span></div>` +
             (cfg.solar_enabled      ? `<div class="lbl" data-lbl="solar" style="left:${this._pos("solar").x}%;top:${this._pos("solar").y}%"><span class="lbl-name">Panelen</span><span class="lbl-val"></span></div>` : "") +
@@ -349,13 +229,9 @@ class UltimatePowerflowCard extends HTMLElement {
 
       this._domBuilt = true;
       this._lastImg  = img;
-
-      // Reset weather so _updateWeather rebuilds the animation on new canvas
-      if (this._stopWx) { this._stopWx(); this._stopWx = null; }
-      this._wxType = "none";
     }
 
-    // ── Always: update label text values in-place ──────
+    // Update label values in-place every tick
     const gv   = parseVal(this._stateOf(cfg.grid_power_entity));
     const hv   = parseVal(this._stateOf(cfg.household_power_entity));
     const sv   = cfg.solar_enabled      ? parseVal(this._stateOf(cfg.solar_power_entity))               : null;
@@ -364,62 +240,17 @@ class UltimatePowerflowCard extends HTMLElement {
     const ev   = cfg.ev_charger_enabled ? parseVal(this._stateOf(cfg.ev_charger_power_entity))          : null;
     const batVal = (bch || 0) > 0 ? bch : bdis !== null ? bdis : null;
 
-    const vals = {
-      grid:  gv,
-      house: hv,
-      solar: sv,
-      bat:   batVal,
-      ev:    ev,
-    };
+    const vals = { grid: gv, house: hv, solar: sv, bat: batVal, ev: ev };
 
     sr.querySelectorAll(".lbl[data-lbl]").forEach((el) => {
-      const key = el.dataset.lbl;
-      const v   = vals[key];
+      const v    = vals[el.dataset.lbl];
       const span = el.querySelector(".lbl-val");
       if (!span) return;
       span.textContent = v === null || v === undefined ? "—" : fmtW(v);
-      span.className = "lbl-val" + (v === null || v === undefined ? " na" : "");
+      span.className   = "lbl-val" + (v === null || v === undefined ? " na" : "");
     });
-
-    // ── Always: update weather animation if type changed ─
-    this._updateWeather(wx);
-  }
-
-  _updateWeather(wx) {
-    if (wx === this._wxType) return; // no change — leave canvas alone
-
-    // Weather type changed — stop old animation
-    if (this._stopWx) { this._stopWx(); this._stopWx = null; }
-    this._wxType = wx;
-
-    // If the new type needs a canvas but the DOM doesn't have one yet,
-    // we need a full rebuild to insert the canvas element
-    const sr = this.shadowRoot;
-    const hasRainCanvas = !!sr.querySelector(".rxc");
-    const hasSnowCanvas = !!sr.querySelector(".sxc");
-
-    if ((wx === "rain" && !hasRainCanvas) || (wx === "snow" && !hasSnowCanvas) || (wx === "none")) {
-      this._domBuilt = false; // force DOM rebuild on next _update
-      this._update();
-      return;
-    }
-
-    this._startWeather();
-  }
-
-  _startWeather() {
-    const sr = this.shadowRoot;
-    if (!sr) return;
-    if (this._wxType === "rain") {
-      const c = sr.querySelector(".rxc");
-      if (c && !this._stopWx) this._stopWx = startRain(c);
-    } else if (this._wxType === "snow") {
-      const c = sr.querySelector(".sxc");
-      if (c && !this._stopWx) this._stopWx = startSnow(c);
-    }
   }
 }
-
 // ── Editor element ────────────────────────────────────────
 class UltimatePowerflowCardEditor extends HTMLElement {
 
@@ -498,8 +329,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       sw("&#128663; EV Charger", "ev_charger_enabled") +
       (c.ev_charger_enabled
         ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity)
-        : "") +
-      ep("Weather Entity (optional)", "weather_entity", c.weather_entity);
+        : "");
 
     this._rendered = true;
 
@@ -551,7 +381,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.3 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v2.2.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
