@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v2.0.3
+ * Ultimate Powerflow Card v2.1.0
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -172,6 +172,63 @@ const CARD_CSS = `
   .wx { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
   .wx canvas { width: 100%; height: 100%; opacity: .38; }
 
+  /* ── Flow line SVG overlay ── */
+  .flow-svg {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 3; pointer-events: none;
+    overflow: visible;
+  }
+
+  /* Base track — always visible, very dim */
+  .flow-track {
+    fill: none;
+    stroke: rgba(255,255,255,0.12);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* Active neon line — glowing solid line under the pulses */
+  .flow-line {
+    fill: none;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  .flow-line.active { opacity: 1; }
+
+  /* Moving pulse dots — HA Energy Dashboard style */
+  .flow-pulse {
+    fill: none;
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    /* dash: short bright dot, long gap */
+    stroke-dasharray: 4 40;
+  }
+  .flow-pulse.active {
+    opacity: 1;
+  }
+
+  /* Forward animation: dashoffset goes negative (dot travels path start→end) */
+  @keyframes pulse-fwd {
+    from { stroke-dashoffset: 44; }
+    to   { stroke-dashoffset: 0; }
+  }
+  /* Reverse animation: dot travels path end→start */
+  @keyframes pulse-rev {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: 44; }
+  }
+
+  .flow-pulse.fwd { animation: pulse-fwd 1.4s linear infinite; }
+  .flow-pulse.rev { animation: pulse-rev 1.4s linear infinite; }
+
   /* Pure text labels — zero background, zero border */
   .lbl { position: absolute; transform: translate(-50%, -50%); z-index: 5; pointer-events: none; text-align: center; line-height: 1.3; }
   .lbl-name {
@@ -188,9 +245,6 @@ const CARD_CSS = `
     text-shadow: 0 0 6px #000, 0 0 14px #000, 0 0 22px #000, 1px 1px 0 #000;
   }
   .lbl-val.na { color: rgba(255,255,255,.4); font-size: 11px; }
-
-  @keyframes fd { to { stroke-dashoffset: -36; } }
-  .fl-off  { opacity: .08; }
 
   @media (max-width: 500px) {
     .lbl-val  { font-size: 11px; }
@@ -339,6 +393,67 @@ class UltimatePowerflowCard extends HTMLElement {
           `<div class="wrap"><div class="inner">` +
             `<img class="bg" src="${img}" alt=""/>` +
             wxHtml +
+            `
+        <!-- ── Flow line SVG overlay (neon energy flow) ── -->
+        <svg class="flow-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <defs>
+            <!-- Neon glow filters per color -->
+            <filter id="glow-grid" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="0.8" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glow-solar" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="0.8" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glow-bat" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="0.8" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glow-ev" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="0.8" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+
+          <!-- Track lines (always visible, very dim background) -->
+          <path class="flow-track" d="M57 63 L57 75 L87 75 L87 67"/>
+          <path class="flow-track" d="M48 26 L56 50 L57 63"/>
+          <path class="flow-track" d="M57 63 L51 63"/>
+          <path class="flow-track" d="M57 63 L57 76 L22 76 L22 70"/>
+
+          <!-- GRID route: forward=export(meter→grid), reverse=import(grid→meter) -->
+          <path class="flow-line" data-route="grid"
+                d="M57 63 L57 75 L87 75 L87 67"
+                stroke="#f5a623" filter="url(#glow-grid)"/>
+          <path class="flow-pulse" data-route="grid"
+                d="M57 63 L57 75 L87 75 L87 67"
+                stroke="#fff" filter="url(#glow-grid)"/>
+
+          <!-- SOLAR route: forward=producing(panels→meter) -->
+          <path class="flow-line" data-route="solar"
+                d="M48 26 L56 50 L57 63"
+                stroke="#ffd700" filter="url(#glow-solar)"/>
+          <path class="flow-pulse" data-route="solar"
+                d="M48 26 L56 50 L57 63"
+                stroke="#fff" filter="url(#glow-solar)"/>
+
+          <!-- BATTERY route: forward=charging(meter→bat), reverse=discharging(bat→meter) -->
+          <path class="flow-line" data-route="bat"
+                d="M57 63 L51 63"
+                stroke="#27ae60" filter="url(#glow-bat)"/>
+          <path class="flow-pulse" data-route="bat"
+                d="M57 63 L51 63"
+                stroke="#fff" filter="url(#glow-bat)"/>
+
+          <!-- EV route: forward=charging(meter→ev) -->
+          <path class="flow-line" data-route="ev"
+                d="M57 63 L57 76 L22 76 L22 70"
+                stroke="#a569bd" filter="url(#glow-ev)"/>
+          <path class="flow-pulse" data-route="ev"
+                d="M57 63 L57 76 L22 76 L22 70"
+                stroke="#fff" filter="url(#glow-ev)"/>
+        </svg>` +
             `<div class="lbl" data-lbl="grid"  style="left:${this._pos("grid").x}%;top:${this._pos("grid").y}%"><span class="lbl-name">Grid</span><span class="lbl-val"></span></div>` +
             `<div class="lbl" data-lbl="house" style="left:${this._pos("house").x}%;top:${this._pos("house").y}%"><span class="lbl-name">Thuis</span><span class="lbl-val"></span></div>` +
             (cfg.solar_enabled      ? `<div class="lbl" data-lbl="solar" style="left:${this._pos("solar").x}%;top:${this._pos("solar").y}%"><span class="lbl-name">Panelen</span><span class="lbl-val"></span></div>` : "") +
@@ -381,8 +496,92 @@ class UltimatePowerflowCard extends HTMLElement {
       span.className = "lbl-val" + (v === null || v === undefined ? " na" : "");
     });
 
+    // ── Always: update flow line animations ─────────────
+    // Grid:    gv > 0  → import (grid→meter, reverse dir on path)
+    //          gv < 0  → export (meter→grid, forward dir on path)
+    //          |gv| < threshold → off
+    // Solar:   sv > 0  → producing (panels→meter, forward)
+    // Battery: bch > 0 → charging  (meter→bat, forward)
+    //          bdis > 0→ discharging (bat→meter, reverse)
+    //          both ≤ 0 → off
+    // EV:      ev > 0  → consuming (meter→ev, forward)
+    this._updateFlows({ gv, sv, bch, bdis, ev });
+
     // ── Always: update weather animation if type changed ─
     this._updateWeather(wx);
+  }
+
+  _updateFlows({ gv, sv, bch, bdis, ev }) {
+    const sr  = this.shadowRoot;
+    if (!sr) return;
+    const THR = 5; // watts threshold below which flow is considered inactive
+
+    // Helper: set a route's line+pulse to active/inactive with direction
+    const setRoute = (route, active, direction) => {
+      const line  = sr.querySelector(`.flow-line[data-route="${route}"]`);
+      const pulse = sr.querySelector(`.flow-pulse[data-route="${route}"]`);
+      if (!line || !pulse) return;
+
+      if (!active) {
+        line.classList.remove("active");
+        pulse.classList.remove("active", "fwd", "rev");
+        return;
+      }
+
+      line.classList.add("active");
+      pulse.classList.add("active");
+
+      // Set direction class (remove other first)
+      if (direction === "fwd") {
+        pulse.classList.remove("rev");
+        pulse.classList.add("fwd");
+      } else {
+        pulse.classList.remove("fwd");
+        pulse.classList.add("rev");
+      }
+    };
+
+    // ── Grid ──────────────────────────────────────────────
+    // Path direction: forward = meter→grid (export, negative gv)
+    // Reverse        = grid→meter (import, positive gv)
+    if (gv !== null && Math.abs(gv) >= THR) {
+      if (gv > 0) {
+        setRoute("grid", true, "rev"); // importing: grid→meter
+      } else {
+        setRoute("grid", true, "fwd"); // exporting: meter→grid
+      }
+    } else {
+      setRoute("grid", false, "fwd");
+    }
+
+    // ── Solar ─────────────────────────────────────────────
+    // Path direction: forward = panels→meter (always when producing)
+    if (sv !== null && sv >= THR) {
+      setRoute("solar", true, "fwd");
+    } else {
+      setRoute("solar", false, "fwd");
+    }
+
+    // ── Battery ───────────────────────────────────────────
+    // Uses TWO separate entities (bch and bdis), not one combined value.
+    // Path direction: forward = meter→battery (charging)
+    //                reverse = battery→meter (discharging)
+    // Priority: if both somehow active, charging wins.
+    if (bch !== null && bch >= THR) {
+      setRoute("bat", true, "fwd");  // charging: meter→battery
+    } else if (bdis !== null && bdis >= THR) {
+      setRoute("bat", true, "rev");  // discharging: battery→meter
+    } else {
+      setRoute("bat", false, "fwd");
+    }
+
+    // ── EV Charger ────────────────────────────────────────
+    // Path direction: forward = meter→ev (always consuming)
+    if (ev !== null && ev >= THR) {
+      setRoute("ev", true, "fwd");
+    } else {
+      setRoute("ev", false, "fwd");
+    }
   }
 
   _updateWeather(wx) {
@@ -551,7 +750,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.3 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v2.1.0 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
