@@ -73,22 +73,11 @@ function isDayTime(s) {
 //  EV charger pole:     x≈22  y≈70
 
 const ROUTES = {
-  // Coordinates are % of card width (x) and % of card height (y).
-  // The house is rendered in 3D perspective: ground cables run diagonally,
-  // NOT horizontally. y increases slightly as x moves right (perspective).
-  //
-  //  Solar panel cable exit (roof): x≈54  y≈43
-  //  Meter / hub (wall box ⚡):     x≈57  y≈65
-  //  Battery (wall box):            x≈51  y≈65
-  //  House base (ground level):     x≈57  y≈69
-  //  Grid transformer:              x≈86  y≈65  (base y≈71)
-  //  EV charger pole:               x≈22  y≈67  (base y≈71)
-  solar_to_meter: [[54,43],[57,53],[57,65]],   // panels → roof exit → meter box
-  meter_to_bat:   [[57,65],[51,65]],            // meter → battery (wall-mounted, same height)
-  meter_to_grid:  [[57,65],[57,69],[86,71],[86,65]], // meter → wall base → diagonal ground → transformer
-  meter_to_ev:    [[57,65],[57,69],[22,71],[22,67]], // meter → wall base → diagonal ground left → EV pole
+  solar_to_meter: [[40,49.4],[39.2,50],[46.3,66.6],[57.3,61.9],[58,63.4],[57.9,64.9],[57.5,66.1],[57.6,71.1]],
+  meter_to_bat:   [[57,79],[57,81.6],[56.9,82.2],[56.5,82.5],[53.1,83.9]],
+  meter_to_grid:  [[89,73.6],[61.7,87],[57.6,84.3],[57.7,78.6]],
+  meter_to_ev:    [[57.7,78.7],[57.7,84.3],[60.7,86.4],[48.8,91.8],[47.8,92.2],[46.9,92.2],[44.2,90.6],[43.6,89.6],[43.4,88.3],[43.4,81],[43.1,79.6]],
 };
-
 // Flow lines removed by user request
 
 // ── Default positions & colors ────────────────────────────
@@ -131,11 +120,7 @@ const CARD_CSS = `
   .fl-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
   .fl { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
   .fl-off { opacity: 0.10; stroke-dasharray: none; }
-  .fl-on  { opacity: 1; stroke-dasharray: 4 8; }
-  .fl-anim      { animation: fl-dash 1.5s linear infinite; }
-  .fl-anim-slow { animation: fl-dash 3.0s linear infinite; }
-  .fl-anim-fast { animation: fl-dash 0.8s linear infinite; }
-  @keyframes fl-dash { to { stroke-dashoffset: -24; } }
+  .fl-on  { opacity: 1; }
 
   @media (max-width: 500px) {
     .lbl-val  { font-size: 11px; }
@@ -227,19 +212,16 @@ class UltimatePowerflowCard extends HTMLElement {
   }
 
   // ── Build one SVG polyline element string ────────────────────
-  // active: bool, color: hex string, pts: [[x,y],...], reversed: bool, speed: string
-  _polyline(active, color, pts, reversed, speed) {
-    const animClass = speed === "slow" ? "fl-anim-slow" : speed === "fast" ? "fl-anim-fast" : "fl-anim";
-    const stateClass = active ? `fl-on ${animClass}` : "fl-off";
-    // animation-direction:reverse keert de richting om (teruglevering / ontladen)
-    const animDir = active && reversed ? "animation-direction:reverse;" : "";
-    // Dubbele drop-shadow voor sterkere neon glow
+  // reversed: physically reverses the points so the traveling dot
+  //           goes in the correct direction (e.g. meter→grid on export).
+  _polyline(active, color, pts, reversed) {
+    const stateClass = active ? "fl-on" : "fl-off";
     const glow = active
       ? `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})`
       : "none";
-    const pointsStr = this._pts(pts);
-    return `<polyline class="fl ${stateClass}" points="${pointsStr}" `
-      + `style="stroke:${color};filter:${glow};${animDir}"/>`;
+    const actualPts = (active && reversed) ? [...pts].reverse() : pts;
+    return `<polyline class="fl ${stateClass}" points="${this._pts(actualPts)}" `
+      + `style="stroke:${color};filter:${glow}"/>`;
   }
 
   // ── Update SVG flow lines based on current power values ──────
@@ -247,53 +229,89 @@ class UltimatePowerflowCard extends HTMLElement {
     const svg = this.shadowRoot.querySelector(".fl-svg");
     if (!svg) return;
 
-    const colors  = { ...DEF_COLORS, ...((cfg.colors) || {}) };
-    const speed   = cfg.animation_speed || "normal";
-    const THRESH  = 5; // W — minimale stroom om lijn te activeren
+    const colors = { ...DEF_COLORS, ...((cfg.colors) || {}) };
+    const speed  = cfg.animation_speed || "normal";
+    const THRESH = 5;
 
-    // Stroomwaarden (null = sensor niet beschikbaar)
-    const solar   = (sv   !== null && sv   !== undefined) ? sv   : 0;
-    const charge  = (bch  !== null && bch  !== undefined) ? bch  : 0;
-    const disch   = (bdis !== null && bdis !== undefined) ? bdis : 0;
-    const evPow   = (ev   !== null && ev   !== undefined) ? ev   : 0;
-    const grid    = (gv   !== null && gv   !== undefined) ? gv   : 0;
+    const solar  = sv   != null ? sv   : 0;
+    const charge = bch  != null ? bch  : 0;
+    const disch  = bdis != null ? bdis : 0;
+    const evPow  = ev   != null ? ev   : 0;
+    const grid   = gv   != null ? gv   : 0;
 
-    // grid > 0 = import (stroom komt van net),  grid < 0 = export (teruglevering)
-    const importing = grid > THRESH;
-    const exporting = grid < -THRESH;
+    const importing   = grid  >  THRESH;
+    const exporting   = grid  < -THRESH;
+    const solarActive = cfg.solar_enabled      && solar  >= THRESH;
+    const batCharging = cfg.battery_enabled    && charge >= THRESH;
+    const batDisch    = cfg.battery_enabled    && disch  >= THRESH;
+    const batActive   = batCharging || batDisch;
+    const gridActive  = importing || exporting;
+    const evActive    = cfg.ev_charger_enabled && evPow  >= THRESH;
+
+    // Only rebuild SVG when flow state changes — keeps animation smooth between updates
+    const flowKey = [
+      solarActive ? "S" : "s",
+      batActive   ? (batDisch ? "Bd" : "Bc") : "b",
+      gridActive  ? (exporting ? "Ge" : "Gi") : "g",
+      evActive    ? "E" : "e",
+    ].join("");
+    if (flowKey === this._lastFlowKey) return;
+    this._lastFlowKey = flowKey;
 
     let svgHtml = "";
 
-    // ── Solar → meter ─────────────────────────────────────────
+    // Solar → meter  (route: panels→meter, forward always)
     if (cfg.solar_enabled) {
-      const active = solar >= THRESH;
-      svgHtml += this._polyline(active, colors.solar, ROUTES.solar_to_meter, false, speed);
+      svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false);
     }
-
-    // ── Meter → Battery (opladen) / Battery → Meter (ontladen) ─
+    // Meter ↔ Battery
+    // Route: meter→battery. Charging=forward, Discharging=reversed (battery→meter)
     if (cfg.battery_enabled) {
-      const charging    = charge >= THRESH;
-      const discharging = disch  >= THRESH;
-      const active = charging || discharging;
-      // reversed=true = animatie loopt achterstevoren = richting battery→meter (ontladen)
-      svgHtml += this._polyline(active, colors.battery, ROUTES.meter_to_bat, discharging && !charging, speed);
+      svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging);
     }
+    // Grid ↔ Meter
+    // Route starts at GRID TRANSFORMER, ends at METER.
+    // grid>0 import: forward (grid→meter) | grid<0 export: reversed (meter→grid)
+    svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting);
 
-    // ── Meter → Grid (export) / Grid → Meter (import) ─────────
-    {
-      const active = importing || exporting;
-      // exporting: dots gaan van meter naar grid (forward)
-      // importing: dots gaan van grid naar meter (reversed)
-      svgHtml += this._polyline(active, colors.grid, ROUTES.meter_to_grid, importing, speed);
-    }
-
-    // ── Meter → EV Charger ─────────────────────────────────────
+    // Meter → EV  (route: meter→EV, forward always)
     if (cfg.ev_charger_enabled) {
-      const active = evPow >= THRESH;
-      svgHtml += this._polyline(active, colors.ev, ROUTES.meter_to_ev, false, speed);
+      svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false);
     }
 
     svg.innerHTML = svgHtml;
+    this._startAnimation(speed);
+  }
+
+  // ── Single traveling dot animation ───────────────────────────
+  // One short dash travels from start to end of the polyline, then
+  // immediately restarts — a "pulse along the cable" effect.
+  _startAnimation(speed) {
+    if (this._animFrame) { cancelAnimationFrame(this._animFrame); this._animFrame = null; }
+    const svg = this.shadowRoot && this.shadowRoot.querySelector(".fl-svg");
+    if (!svg) return;
+    const lines = [...svg.querySelectorAll("polyline.fl-on")];
+    if (!lines.length) return;
+
+    const dur = speed === "slow" ? 3000 : speed === "fast" ? 700 : 1500;
+    const items = lines.map(el => {
+      const len = el.getTotalLength();
+      const dot = Math.max(3, Math.min(14, len * 0.15));
+      el.style.strokeDasharray  = dot + " " + len;
+      el.style.strokeDashoffset = "0";
+      return { el, total: len + dot };
+    });
+
+    let t0 = null;
+    const tick = (ts) => {
+      if (t0 === null) t0 = ts;
+      const p = ((ts - t0) % dur) / dur;
+      items.forEach(({ el, total }) => {
+        el.style.strokeDashoffset = String(-(p * total));
+      });
+      this._animFrame = requestAnimationFrame(tick);
+    };
+    this._animFrame = requestAnimationFrame(tick);
   }
 
   _update() {
