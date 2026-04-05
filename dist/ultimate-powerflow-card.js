@@ -118,8 +118,8 @@ const CARD_CSS = `
 
   /* ── Animated neon flow lines ── */
   .fl-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
-  .fl { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
-  .fl-off { opacity: 0.10; stroke-dasharray: none; }
+  .fl { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
+  .fl-off { opacity: 0; pointer-events: none; }
   .fl-on  { opacity: 1; }
 
   @media (max-width: 500px) {
@@ -176,7 +176,9 @@ class UltimatePowerflowCard extends HTMLElement {
       ev_charger_enabled: false,
       ...config,
     };
-    this._domBuilt = false;
+    this._domBuilt    = false;
+    this._lastFlowKey = "";  // reset so _updateFlows rebuilds after config change
+    if (this._animFrame) { cancelAnimationFrame(this._animFrame); this._animFrame = null; }
     this._update();
   }
 
@@ -214,13 +216,25 @@ class UltimatePowerflowCard extends HTMLElement {
   // ── Build one SVG polyline element string ────────────────────
   // reversed: physically reverses the points so the traveling dot
   //           goes in the correct direction (e.g. meter→grid on export).
+  // Path length is calculated from the coordinate array so we never need
+  // getTotalLength() — which throws when the element is not yet rendered.
   _polyline(active, color, pts, reversed) {
     const stateClass = active ? "fl-on" : "fl-off";
     const glow = active
       ? `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})`
       : "none";
     const actualPts = (active && reversed) ? [...pts].reverse() : pts;
+
+    // Euclidean path length in SVG user units (same result as getTotalLength())
+    let len = 0;
+    for (let i = 1; i < actualPts.length; i++) {
+      const dx = actualPts[i][0] - actualPts[i - 1][0];
+      const dy = actualPts[i][1] - actualPts[i - 1][1];
+      len += Math.sqrt(dx * dx + dy * dy);
+    }
+
     return `<polyline class="fl ${stateClass}" points="${this._pts(actualPts)}" `
+      + `data-len="${len.toFixed(2)}" `
       + `style="stroke:${color};filter:${glow}"/>`;
   }
 
@@ -255,32 +269,37 @@ class UltimatePowerflowCard extends HTMLElement {
       gridActive  ? (exporting ? "Ge" : "Gi") : "g",
       evActive    ? "E" : "e",
     ].join("");
-    if (flowKey === this._lastFlowKey) return;
-    this._lastFlowKey = flowKey;
+    if (flowKey !== this._lastFlowKey) {
+      this._lastFlowKey = flowKey;
 
-    let svgHtml = "";
+      let svgHtml = "";
 
-    // Solar → meter  (route: panels→meter, forward always)
-    if (cfg.solar_enabled) {
-      svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false);
+      // Solar → meter  (route: panels→meter, forward always)
+      if (cfg.solar_enabled) {
+        svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false);
+      }
+      // Meter ↔ Battery
+      // Route: meter→battery. Charging=forward, Discharging=reversed (battery→meter)
+      if (cfg.battery_enabled) {
+        svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging);
+      }
+      // Grid ↔ Meter
+      // Route starts at GRID TRANSFORMER, ends at METER.
+      // grid>0 import: forward (grid→meter) | grid<0 export: reversed (meter→grid)
+      svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting);
+
+      // Meter → EV  (route: meter→EV, forward always)
+      if (cfg.ev_charger_enabled) {
+        svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false);
+      }
+
+      svg.innerHTML = svgHtml;
+      // Start animation directly — no rendering dependency since we use data-len.
+      this._startAnimation(speed);
+    } else if (!this._animFrame) {
+      // Animation stopped unexpectedly (e.g. after DOM rebuild) — restart it
+      this._startAnimation(speed);
     }
-    // Meter ↔ Battery
-    // Route: meter→battery. Charging=forward, Discharging=reversed (battery→meter)
-    if (cfg.battery_enabled) {
-      svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging);
-    }
-    // Grid ↔ Meter
-    // Route starts at GRID TRANSFORMER, ends at METER.
-    // grid>0 import: forward (grid→meter) | grid<0 export: reversed (meter→grid)
-    svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting);
-
-    // Meter → EV  (route: meter→EV, forward always)
-    if (cfg.ev_charger_enabled) {
-      svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false);
-    }
-
-    svg.innerHTML = svgHtml;
-    this._startAnimation(speed);
   }
 
   // ── Single traveling dot animation ───────────────────────────
@@ -295,7 +314,10 @@ class UltimatePowerflowCard extends HTMLElement {
 
     const dur = speed === "slow" ? 3000 : speed === "fast" ? 700 : 1500;
     const items = lines.map(el => {
-      const len = el.getTotalLength();
+      // Read pre-calculated length from data attribute — no getTotalLength() needed.
+      // getTotalLength() throws InvalidStateError when element is not yet rendered
+      // (e.g. shadow DOM not attached, card not visible). data-len is always safe.
+      const len = parseFloat(el.dataset.len) || 50;
       const dot = Math.max(3, Math.min(14, len * 0.15));
       el.style.strokeDasharray  = dot + " " + len;
       el.style.strokeDashoffset = "0";
