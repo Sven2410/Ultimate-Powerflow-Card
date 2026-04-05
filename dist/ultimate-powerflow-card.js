@@ -117,6 +117,16 @@ const CARD_CSS = `
   }
   .lbl-val.na { color: rgba(255,255,255,.4); font-size: 11px; }
 
+  /* ── Animated neon flow lines ── */
+  .fl-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
+  .fl { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
+  .fl-off { opacity: 0.10; stroke-dasharray: none; }
+  .fl-on  { opacity: 1; stroke-dasharray: 4 8; }
+  .fl-anim      { animation: fl-dash 1.5s linear infinite; }
+  .fl-anim-slow { animation: fl-dash 3.0s linear infinite; }
+  .fl-anim-fast { animation: fl-dash 0.8s linear infinite; }
+  @keyframes fl-dash { to { stroke-dashoffset: -24; } }
+
   @media (max-width: 500px) {
     .lbl-val  { font-size: 11px; }
     .lbl-name { font-size: 8px; }
@@ -201,6 +211,81 @@ class UltimatePowerflowCard extends HTMLElement {
     return (this._config.label_positions && this._config.label_positions[key]) || DEF_POS[key];
   }
 
+  // ── Convert point array [[x,y],...] to SVG polyline points string ──
+  _pts(arr) {
+    return arr.map(([x, y]) => `${x},${y}`).join(" ");
+  }
+
+  // ── Build one SVG polyline element string ────────────────────
+  // active: bool, color: hex string, pts: [[x,y],...], reversed: bool, speed: string
+  _polyline(active, color, pts, reversed, speed) {
+    const animClass = speed === "slow" ? "fl-anim-slow" : speed === "fast" ? "fl-anim-fast" : "fl-anim";
+    const stateClass = active ? `fl-on ${animClass}` : "fl-off";
+    // animation-direction:reverse keert de richting om (teruglevering / ontladen)
+    const animDir = active && reversed ? "animation-direction:reverse;" : "";
+    // Dubbele drop-shadow voor sterkere neon glow
+    const glow = active
+      ? `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})`
+      : "none";
+    const pointsStr = this._pts(pts);
+    return `<polyline class="fl ${stateClass}" points="${pointsStr}" `
+      + `style="stroke:${color};filter:${glow};${animDir}"/>`;
+  }
+
+  // ── Update SVG flow lines based on current power values ──────
+  _updateFlows(gv, sv, bch, bdis, ev, cfg) {
+    const svg = this.shadowRoot.querySelector(".fl-svg");
+    if (!svg) return;
+
+    const colors  = { ...DEF_COLORS, ...((cfg.colors) || {}) };
+    const speed   = cfg.animation_speed || "normal";
+    const THRESH  = 5; // W — minimale stroom om lijn te activeren
+
+    // Stroomwaarden (null = sensor niet beschikbaar)
+    const solar   = (sv   !== null && sv   !== undefined) ? sv   : 0;
+    const charge  = (bch  !== null && bch  !== undefined) ? bch  : 0;
+    const disch   = (bdis !== null && bdis !== undefined) ? bdis : 0;
+    const evPow   = (ev   !== null && ev   !== undefined) ? ev   : 0;
+    const grid    = (gv   !== null && gv   !== undefined) ? gv   : 0;
+
+    // grid > 0 = import (stroom komt van net),  grid < 0 = export (teruglevering)
+    const importing = grid > THRESH;
+    const exporting = grid < -THRESH;
+
+    let svgHtml = "";
+
+    // ── Solar → meter ─────────────────────────────────────────
+    if (cfg.solar_enabled) {
+      const active = solar >= THRESH;
+      svgHtml += this._polyline(active, colors.solar, ROUTES.solar_to_meter, false, speed);
+    }
+
+    // ── Meter → Battery (opladen) / Battery → Meter (ontladen) ─
+    if (cfg.battery_enabled) {
+      const charging    = charge >= THRESH;
+      const discharging = disch  >= THRESH;
+      const active = charging || discharging;
+      // reversed=true = animatie loopt achterstevoren = richting battery→meter (ontladen)
+      svgHtml += this._polyline(active, colors.battery, ROUTES.meter_to_bat, discharging && !charging, speed);
+    }
+
+    // ── Meter → Grid (export) / Grid → Meter (import) ─────────
+    {
+      const active = importing || exporting;
+      // exporting: dots gaan van meter naar grid (forward)
+      // importing: dots gaan van grid naar meter (reversed)
+      svgHtml += this._polyline(active, colors.grid, ROUTES.meter_to_grid, importing, speed);
+    }
+
+    // ── Meter → EV Charger ─────────────────────────────────────
+    if (cfg.ev_charger_enabled) {
+      const active = evPow >= THRESH;
+      svgHtml += this._polyline(active, colors.ev, ROUTES.meter_to_ev, false, speed);
+    }
+
+    svg.innerHTML = svgHtml;
+  }
+
   _update() {
     if (!this._config) return;
     const cfg = this._config;
@@ -219,6 +304,8 @@ class UltimatePowerflowCard extends HTMLElement {
         `<ha-card>` +
           `<div class="wrap"><div class="inner">` +
             `<img class="bg" src="${img}" alt=""/>` +
+            // SVG overlay voor geanimeerde stroomlijnen (volgt de zichtbare kabels in de afbeelding)
+            `<svg class="fl-svg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>` +
             `<div class="lbl" data-lbl="grid"  style="left:${this._pos("grid").x}%;top:${this._pos("grid").y}%"><span class="lbl-name">Grid</span><span class="lbl-val"></span></div>` +
             `<div class="lbl" data-lbl="house" style="left:${this._pos("house").x}%;top:${this._pos("house").y}%"><span class="lbl-name">Thuis</span><span class="lbl-val"></span></div>` +
             (cfg.solar_enabled      ? `<div class="lbl" data-lbl="solar" style="left:${this._pos("solar").x}%;top:${this._pos("solar").y}%"><span class="lbl-name">Panelen</span><span class="lbl-val"></span></div>` : "") +
@@ -249,6 +336,9 @@ class UltimatePowerflowCard extends HTMLElement {
       span.textContent = v === null || v === undefined ? "—" : fmtW(v);
       span.className   = "lbl-val" + (v === null || v === undefined ? " na" : "");
     });
+
+    // Update geanimeerde SVG stroomlijnen
+    this._updateFlows(gv, sv, bch, bdis, ev, cfg);
   }
 }
 // ── Editor element ────────────────────────────────────────
