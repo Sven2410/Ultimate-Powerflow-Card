@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v2.0.1
+ * Ultimate Powerflow Card v2.0.2
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -235,6 +235,8 @@ class UltimatePowerflowCard extends HTMLElement {
     this._stopWx   = null;
     this._wxType   = "none";
     this._ro       = null;
+    this._domBuilt = false;   // true after first full DOM build
+    this._lastImg  = null;    // track last image src
   }
 
   setConfig(config) {
@@ -253,7 +255,7 @@ class UltimatePowerflowCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this._config) this._render();
+    if (this._config) this._update();
   }
 
   connectedCallback() {
@@ -298,72 +300,120 @@ class UltimatePowerflowCard extends HTMLElement {
            `</div>`;
   }
 
+  // Called from setConfig — always does a full DOM rebuild
   _render() {
     if (!this._config) return;
-    const cfg = this._config;
+    this._domBuilt = false; // force full rebuild
+    this._update();
+  }
 
-    // Sensor values
+  // Called every hass update — smart: only rebuilds DOM when structure changes
+  _update() {
+    if (!this._config) return;
+    const cfg = this._config;
+    const sr  = this.shadowRoot;
+
+    // Current image key
+    const img = pickImage(
+      isDayTime(this._stateOf(cfg.sun_entity || "sun.sun")),
+      !!cfg.solar_enabled, !!cfg.battery_enabled, !!cfg.ev_charger_enabled
+    );
+
+    // Current weather type
+    const wx = getWxType(this._stateOf(cfg.weather_entity));
+
+    const needFullRebuild = !this._domBuilt || this._lastImg !== img;
+
+    if (needFullRebuild) {
+      // ── Full DOM build ─────────────────────────────────
+      const wxHtml = wx === "rain"
+        ? `<div class="wx"><canvas class="rxc"></canvas></div>`
+        : wx === "snow"
+        ? `<div class="wx"><canvas class="sxc"></canvas></div>`
+        : "";
+
+      sr.innerHTML =
+        `<style>${CARD_CSS}</style>` +
+        `<ha-card>` +
+          `<div class="wrap"><div class="inner">` +
+            `<img class="bg" src="${img}" alt=""/>` +
+            wxHtml +
+            `<div class="lbl" data-lbl="grid"  style="left:${this._pos("grid").x}%;top:${this._pos("grid").y}%"><span class="lbl-name">Grid</span><span class="lbl-val"></span></div>` +
+            `<div class="lbl" data-lbl="house" style="left:${this._pos("house").x}%;top:${this._pos("house").y}%"><span class="lbl-name">Thuis</span><span class="lbl-val"></span></div>` +
+            (cfg.solar_enabled      ? `<div class="lbl" data-lbl="solar" style="left:${this._pos("solar").x}%;top:${this._pos("solar").y}%"><span class="lbl-name">Panelen</span><span class="lbl-val"></span></div>` : "") +
+            (cfg.battery_enabled    ? `<div class="lbl" data-lbl="bat"   style="left:${this._pos("bat").x}%;top:${this._pos("bat").y}%"><span class="lbl-name">Batterij</span><span class="lbl-val"></span></div>` : "") +
+            (cfg.ev_charger_enabled ? `<div class="lbl" data-lbl="ev"    style="left:${this._pos("ev").x}%;top:${this._pos("ev").y}%"><span class="lbl-name">EV</span><span class="lbl-val"></span></div>` : "") +
+          `</div></div>` +
+        `</ha-card>`;
+
+      this._domBuilt = true;
+      this._lastImg  = img;
+
+      // Reset weather so _updateWeather rebuilds the animation on new canvas
+      if (this._stopWx) { this._stopWx(); this._stopWx = null; }
+      this._wxType = "none";
+    }
+
+    // ── Always: update label text values in-place ──────
     const gv   = parseVal(this._stateOf(cfg.grid_power_entity));
     const hv   = parseVal(this._stateOf(cfg.household_power_entity));
     const sv   = cfg.solar_enabled      ? parseVal(this._stateOf(cfg.solar_power_entity))               : null;
     const bch  = cfg.battery_enabled    ? parseVal(this._stateOf(cfg.battery_charging_power_entity))    : null;
     const bdis = cfg.battery_enabled    ? parseVal(this._stateOf(cfg.battery_discharging_power_entity)) : null;
     const ev   = cfg.ev_charger_enabled ? parseVal(this._stateOf(cfg.ev_charger_power_entity))          : null;
-
-
-    // Image
-    const img = pickImage(
-      isDayTime(this._stateOf(cfg.sun_entity || "sun.sun")),
-      !!cfg.solar_enabled, !!cfg.battery_enabled, !!cfg.ev_charger_enabled
-    );
-
-    // Weather overlay
-    const wx = getWxType(this._stateOf(cfg.weather_entity));
-    const wxHtml = wx === "rain"
-      ? `<div class="wx"><canvas class="rxc"></canvas></div>`
-      : wx === "snow"
-      ? `<div class="wx"><canvas class="sxc"></canvas></div>`
-      : "";
-
-
-
-    // Battery display: prefer charging, else discharging
     const batVal = (bch || 0) > 0 ? bch : bdis !== null ? bdis : null;
 
-    // Labels
-    const labels = [
-      this._label("grid",  "Grid",    gv !== null ? Math.abs(gv) : null),
-      this._label("house", "Thuis",   hv),
-      cfg.solar_enabled      ? this._label("solar", "Panelen", sv)     : "",
-      cfg.battery_enabled    ? this._label("bat",   "Batterij",batVal) : "",
-      cfg.ev_charger_enabled ? this._label("ev",    "EV",      ev)     : "",
-    ].join("");
+    const vals = {
+      grid:  gv  !== null ? Math.abs(gv) : null,
+      house: hv,
+      solar: sv,
+      bat:   batVal,
+      ev:    ev,
+    };
 
-    this.shadowRoot.innerHTML =
-      `<style>${CARD_CSS}</style>` +
-      `<ha-card>` +
-        `<div class="wrap"><div class="inner">` +
-          `<img class="bg" src="${img}" alt=""/>` +
-          wxHtml +
+    sr.querySelectorAll(".lbl[data-lbl]").forEach((el) => {
+      const key = el.dataset.lbl;
+      const v   = vals[key];
+      const span = el.querySelector(".lbl-val");
+      if (!span) return;
+      span.textContent = v === null || v === undefined ? "—" : fmtW(v);
+      span.className = "lbl-val" + (v === null || v === undefined ? " na" : "");
+    });
 
-          labels +
-        `</div></div>` +
-      `</ha-card>`;
+    // ── Always: update weather animation if type changed ─
+    this._updateWeather(wx);
+  }
 
-    // Update weather animation
-    if (wx !== this._wxType) {
-      if (this._stopWx) { this._stopWx(); this._stopWx = null; }
-      this._wxType = wx;
+  _updateWeather(wx) {
+    if (wx === this._wxType) return; // no change — leave canvas alone
+
+    // Weather type changed — stop old animation
+    if (this._stopWx) { this._stopWx(); this._stopWx = null; }
+    this._wxType = wx;
+
+    // If the new type needs a canvas but the DOM doesn't have one yet,
+    // we need a full rebuild to insert the canvas element
+    const sr = this.shadowRoot;
+    const hasRainCanvas = !!sr.querySelector(".rxc");
+    const hasSnowCanvas = !!sr.querySelector(".sxc");
+
+    if ((wx === "rain" && !hasRainCanvas) || (wx === "snow" && !hasSnowCanvas) || (wx === "none")) {
+      this._domBuilt = false; // force DOM rebuild on next _update
+      this._update();
+      return;
     }
+
     this._startWeather();
   }
 
   _startWeather() {
+    const sr = this.shadowRoot;
+    if (!sr) return;
     if (this._wxType === "rain") {
-      const c = this.shadowRoot && this.shadowRoot.querySelector(".rxc");
+      const c = sr.querySelector(".rxc");
       if (c && !this._stopWx) this._stopWx = startRain(c);
     } else if (this._wxType === "snow") {
-      const c = this.shadowRoot && this.shadowRoot.querySelector(".sxc");
+      const c = sr.querySelector(".sxc");
       if (c && !this._stopWx) this._stopWx = startSnow(c);
     }
   }
@@ -500,7 +550,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.1 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.2 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
