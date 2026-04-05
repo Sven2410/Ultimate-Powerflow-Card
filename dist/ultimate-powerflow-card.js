@@ -1,5 +1,5 @@
 /**
- * Ultimate Powerflow Card v2.0.2
+ * Ultimate Powerflow Card v2.0.3
  */
 
 // ── Embedded images (injected at build time) ──────────────
@@ -38,12 +38,13 @@ function pickImage(day, solar, bat, ev) {
 // ── Helpers ───────────────────────────────────────────────
 function fmtW(w) {
   if (w === null || w === undefined || isNaN(w)) return "—";
+  const sign = w < 0 ? "-" : "";
   const a = Math.abs(w);
-  if (a < 1000) return Math.round(a) + " W";
+  if (a < 1000) return sign + Math.round(a) + " W";
   const k = a / 1000;
-  if (k < 10)  return k.toFixed(2) + " kW";
-  if (k < 100) return k.toFixed(1) + " kW";
-  return Math.round(k) + " kW";
+  if (k < 10)  return sign + k.toFixed(2) + " kW";
+  if (k < 100) return sign + k.toFixed(1) + " kW";
+  return sign + Math.round(k) + " kW";
 }
 
 function parseVal(s) {
@@ -364,7 +365,7 @@ class UltimatePowerflowCard extends HTMLElement {
     const batVal = (bch || 0) > 0 ? bch : bdis !== null ? bdis : null;
 
     const vals = {
-      grid:  gv  !== null ? Math.abs(gv) : null,
+      grid:  gv,
       house: hv,
       solar: sv,
       bat:   batVal,
@@ -550,7 +551,7 @@ if (!window.customCards.find((c) => c.type === "ultimate-powerflow-card")) {
 }
 
 console.info(
-  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.2 ",
+  "%c ULTIMATE-POWERFLOW-CARD %c v2.0.3 ",
   "background:#1a1a2e;color:#ffd700;font-weight:700;padding:2px 6px;border-radius:3px 0 0 3px",
   "background:#ffd700;color:#1a1a2e;font-weight:700;padding:2px 6px;border-radius:0 3px 3px 0"
 );
