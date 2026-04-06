@@ -118,7 +118,7 @@ const CARD_CSS = `
 
   /* ── Animated neon flow lines ── */
   .fl-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
-  .fl { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
+  .fl { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 0.8; }
   .fl-off { opacity: 0; pointer-events: none; }
   .fl-on  { opacity: 1; }
 
@@ -143,6 +143,14 @@ const EDITOR_CSS = `
   .ci input[type=color] { width: 40px; height: 28px; border: none; background: none; cursor: pointer; border-radius: 6px; }
   .sel { width: 100%; background: var(--card-background-color, #1c1c2e); color: var(--primary-text-color);
          border: 1px solid var(--divider-color, rgba(255,255,255,.2)); border-radius: 4px; padding: 8px; font-size: 14px; margin-top: 4px; }
+  .shape-row { display: flex; gap: 8px; margin-top: 6px; }
+  .shape-btn { flex: 1; padding: 8px 4px; border-radius: 6px; border: 1px solid var(--divider-color, rgba(255,255,255,.2));
+               background: var(--card-background-color, #1c1c2e); color: var(--primary-text-color);
+               font-size: 13px; cursor: pointer; text-align: center; transition: border-color .15s; }
+  .shape-btn.active { border-color: var(--primary-color, #ffd700); color: var(--primary-color, #ffd700); font-weight: 700; }
+  .speed-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .speed-wrap input[type=range] { flex: 1; }
+  .speed-val { font-size: 13px; color: var(--primary-text-color); min-width: 38px; text-align: right; }
 `;
 
 // ── Main Card element ─────────────────────────────────────
@@ -218,14 +226,14 @@ class UltimatePowerflowCard extends HTMLElement {
   //           goes in the correct direction (e.g. meter→grid on export).
   // Path length is calculated from the coordinate array so we never need
   // getTotalLength() — which throws when the element is not yet rendered.
-  _polyline(active, color, pts, reversed) {
+  _polyline(active, color, pts, reversed, shape) {
     const stateClass = active ? "fl-on" : "fl-off";
     const glow = active
       ? `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})`
       : "none";
     const actualPts = (active && reversed) ? [...pts].reverse() : pts;
 
-    // Euclidean path length in SVG user units (same result as getTotalLength())
+    // Euclidean path length — no getTotalLength() needed, works before render.
     let len = 0;
     for (let i = 1; i < actualPts.length; i++) {
       const dx = actualPts[i][0] - actualPts[i - 1][0];
@@ -233,9 +241,14 @@ class UltimatePowerflowCard extends HTMLElement {
       len += Math.sqrt(dx * dx + dy * dy);
     }
 
+    // shape="dot": round linecap + larger dot, shape="dash" (default): square-ish dash
+    const extraStyle = shape === "dot"
+      ? `stroke-linecap:round;`
+      : `stroke-linecap:square;`;
+
     return `<polyline class="fl ${stateClass}" points="${this._pts(actualPts)}" `
-      + `data-len="${len.toFixed(2)}" `
-      + `style="stroke:${color};filter:${glow}"/>`;
+      + `data-len="${len.toFixed(2)}" data-shape="${shape || "dash"}" `
+      + `style="stroke:${color};filter:${glow};${extraStyle}"/>`;
   }
 
   // ── Update SVG flow lines based on current power values ──────
@@ -245,6 +258,7 @@ class UltimatePowerflowCard extends HTMLElement {
 
     const colors = { ...DEF_COLORS, ...((cfg.colors) || {}) };
     const speed  = cfg.animation_speed || "normal";
+    const shape  = cfg.flow_shape || "dash";
     const THRESH = 5;
 
     const solar  = sv   != null ? sv   : 0;
@@ -268,6 +282,7 @@ class UltimatePowerflowCard extends HTMLElement {
       batActive   ? (batDisch ? "Bd" : "Bc") : "b",
       gridActive  ? (exporting ? "Ge" : "Gi") : "g",
       evActive    ? "E" : "e",
+      shape, speed,
     ].join("");
     if (flowKey !== this._lastFlowKey) {
       this._lastFlowKey = flowKey;
@@ -276,21 +291,21 @@ class UltimatePowerflowCard extends HTMLElement {
 
       // Solar → meter  (route: panels→meter, forward always)
       if (cfg.solar_enabled) {
-        svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false);
+        svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false, shape);
       }
       // Meter ↔ Battery
       // Route: meter→battery. Charging=forward, Discharging=reversed (battery→meter)
       if (cfg.battery_enabled) {
-        svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging);
+        svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging, shape);
       }
       // Grid ↔ Meter
       // Route starts at GRID TRANSFORMER, ends at METER.
       // grid>0 import: forward (grid→meter) | grid<0 export: reversed (meter→grid)
-      svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting);
+      svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting, shape);
 
       // Meter → EV  (route: meter→EV, forward always)
       if (cfg.ev_charger_enabled) {
-        svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false);
+        svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false, shape);
       }
 
       svg.innerHTML = svgHtml;
@@ -312,13 +327,18 @@ class UltimatePowerflowCard extends HTMLElement {
     const lines = [...svg.querySelectorAll("polyline.fl-on")];
     if (!lines.length) return;
 
-    const dur = speed === "slow" ? 3000 : speed === "fast" ? 700 : 1500;
+    // animation_speed_ms (number, from slider) takes priority over string preset
+    const dur = typeof cfg.animation_speed_ms === "number"
+      ? cfg.animation_speed_ms
+      : (speed === "slow" ? 3000 : speed === "fast" ? 700 : 1500);
     const items = lines.map(el => {
       // Read pre-calculated length from data attribute — no getTotalLength() needed.
-      // getTotalLength() throws InvalidStateError when element is not yet rendered
-      // (e.g. shadow DOM not attached, card not visible). data-len is always safe.
-      const len = parseFloat(el.dataset.len) || 50;
-      const dot = Math.max(3, Math.min(14, len * 0.15));
+      const len   = parseFloat(el.dataset.len) || 50;
+      const shape = el.dataset.shape || "dash";
+      // dot shape: smaller round circle | dash: longer rectangular streak
+      const dot = shape === "dot"
+        ? Math.max(1.5, Math.min(4,  len * 0.04))   // small tight circle
+        : Math.max(3,   Math.min(14, len * 0.15));   // longer dash streak
       el.style.strokeDasharray  = dot + " " + len;
       el.style.strokeDashoffset = "0";
       return { el, total: len + dot };
@@ -469,14 +489,73 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       sw("&#128663; EV Charger", "ev_charger_enabled") +
       (c.ev_charger_enabled
         ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity)
-        : "");
+        : "") +
+
+      // ── Appearance ──────────────────────────────────────────────
+      `<div class="sec">&#127912; Appearance</div>` +
+
+      // Flow shape
+      `<div class="tlbl" style="font-size:13px;margin-bottom:4px">Flow shape</div>` +
+      `<div class="shape-row">` +
+        `<button class="shape-btn${(c.flow_shape||"dash")==="dash"?" active":""}" data-shape="dash">&#9135; Dash</button>` +
+        `<button class="shape-btn${c.flow_shape==="dot"?" active":""}" data-shape="dot">&#9679; Dot</button>` +
+      `</div>` +
+
+      // Speed slider
+      `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Animation speed</div>` +
+      `<div class="speed-wrap">` +
+        `<span style="font-size:12px;color:var(--secondary-text-color)">Slow</span>` +
+        `<input type="range" min="200" max="5000" step="100" value="${c.animation_speed_ms||1500}" data-key="animation_speed_ms">` +
+        `<span style="font-size:12px;color:var(--secondary-text-color)">Fast</span>` +
+        `<span class="speed-val">${((c.animation_speed_ms||1500)/1000).toFixed(1)}s</span>` +
+      `</div>` +
+
+      // Colors
+      `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Flow line colors</div>` +
+      `<div class="cr">` +
+        `<div class="ci"><input type="color" value="${(c.colors&&c.colors.grid)||DEF_COLORS.grid}" data-key="colors.grid"><span>Grid</span></div>` +
+        `<div class="ci"><input type="color" value="${(c.colors&&c.colors.solar)||DEF_COLORS.solar}" data-key="colors.solar"><span>Solar</span></div>` +
+        `<div class="ci"><input type="color" value="${(c.colors&&c.colors.battery)||DEF_COLORS.battery}" data-key="colors.battery"><span>Battery</span></div>` +
+        `<div class="ci"><input type="color" value="${(c.colors&&c.colors.ev)||DEF_COLORS.ev}" data-key="colors.ev"><span>EV</span></div>` +
+      `</div>`;
 
     this._rendered = true;
 
-    // Bind switches immediately
+    // Bind switches
     this.shadowRoot.querySelectorAll("ha-switch").forEach((el) => {
       el.addEventListener("change", (e) => {
         if (el.dataset.key) this._toggle(el.dataset.key, e.target.checked);
+      });
+    });
+
+    // Bind shape buttons
+    this.shadowRoot.querySelectorAll(".shape-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this._pick("flow_shape", btn.dataset.shape);
+        this._render();
+      });
+    });
+
+    // Bind speed slider
+    const speedSlider = this.shadowRoot.querySelector("input[data-key='animation_speed_ms']");
+    if (speedSlider) {
+      speedSlider.addEventListener("input", (e) => {
+        const ms = parseInt(e.target.value);
+        this._pick("animation_speed_ms", ms);
+        const valEl = this.shadowRoot.querySelector(".speed-val");
+        if (valEl) valEl.textContent = (ms / 1000).toFixed(1) + "s";
+      });
+    }
+
+    // Bind color inputs
+    this.shadowRoot.querySelectorAll("input[type=color]").forEach((inp) => {
+      inp.addEventListener("input", (e) => {
+        const key = inp.dataset.key; // e.g. "colors.grid"
+        if (!key) return;
+        const [parent, child] = key.split(".");
+        const updated = { ...((this._config[parent]) || {}), [child]: e.target.value };
+        this._config = { ...this._config, [parent]: updated };
+        this._fire();
       });
     });
 
