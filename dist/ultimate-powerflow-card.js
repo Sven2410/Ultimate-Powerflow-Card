@@ -143,14 +143,14 @@ const EDITOR_CSS = `
   .ci input[type=color] { width: 40px; height: 28px; border: none; background: none; cursor: pointer; border-radius: 6px; }
   .sel { width: 100%; background: var(--card-background-color, #1c1c2e); color: var(--primary-text-color);
          border: 1px solid var(--divider-color, rgba(255,255,255,.2)); border-radius: 4px; padding: 8px; font-size: 14px; margin-top: 4px; }
-  .shape-row { display: flex; gap: 8px; margin-top: 6px; }
-  .shape-btn { flex: 1; padding: 8px 4px; border-radius: 6px; border: 1px solid var(--divider-color, rgba(255,255,255,.2));
-               background: var(--card-background-color, #1c1c2e); color: var(--primary-text-color);
-               font-size: 13px; cursor: pointer; text-align: center; transition: border-color .15s; }
-  .shape-btn.active { border-color: var(--primary-color, #ffd700); color: var(--primary-color, #ffd700); font-weight: 700; }
-  .speed-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
-  .speed-wrap input[type=range] { flex: 1; }
-  .speed-val { font-size: 13px; color: var(--primary-text-color); min-width: 38px; text-align: right; }
+  .cslider-wrap { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+  .cslider-wrap .lbl { font-size: 11px; color: var(--secondary-text-color); white-space: nowrap; }
+  .cslider-wrap .val { font-size: 13px; color: var(--primary-text-color); min-width: 42px; text-align: right; white-space: nowrap; }
+  .cslider { flex: 1; height: 20px; position: relative; cursor: pointer; display: flex; align-items: center; }
+  .cslider-track { width: 100%; height: 4px; background: var(--divider-color, rgba(255,255,255,.2)); border-radius: 2px; position: relative; }
+  .cslider-fill  { height: 100%; border-radius: 2px; background: var(--primary-color, #ffd700); }
+  .cslider-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--primary-color, #ffd700);
+                   position: absolute; top: 50%; transform: translate(-50%, -50%); cursor: grab; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
 `;
 
 // ── Main Card element ─────────────────────────────────────
@@ -226,7 +226,7 @@ class UltimatePowerflowCard extends HTMLElement {
   //           goes in the correct direction (e.g. meter→grid on export).
   // Path length is calculated from the coordinate array so we never need
   // getTotalLength() — which throws when the element is not yet rendered.
-  _polyline(active, color, pts, reversed, shape) {
+  _polyline(active, color, pts, reversed) {
     const stateClass = active ? "fl-on" : "fl-off";
     const glow = active
       ? `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})`
@@ -241,15 +241,9 @@ class UltimatePowerflowCard extends HTMLElement {
       len += Math.sqrt(dx * dx + dy * dy);
     }
 
-    // shape="dot": thicker stroke so the 0.01-unit dash looks like a visible circle
-    // shape="dash": default stroke width
-    const extraStyle = shape === "dot"
-      ? `stroke-width:3;stroke-linecap:round;`
-      : `stroke-linecap:square;`;
-
     return `<polyline class="fl ${stateClass}" points="${this._pts(actualPts)}" `
-      + `data-len="${len.toFixed(2)}" data-shape="${shape || "dash"}" `
-      + `style="stroke:${color};filter:${glow};${extraStyle}"/>`;
+      + `data-len="${len.toFixed(2)}" `
+      + `style="stroke:${color};filter:${glow};stroke-linecap:round;"/>`;
   }
 
   // ── Update SVG flow lines based on current power values ──────
@@ -258,13 +252,13 @@ class UltimatePowerflowCard extends HTMLElement {
     if (!svg) return;
 
     const colors = { ...DEF_COLORS, ...((cfg.colors) || {}) };
-    const shape  = cfg.flow_shape || "dash";
     const THRESH = 5;
-    // animation_speed_ms (slider) takes priority over the legacy string preset
     const speedStr = cfg.animation_speed || "normal";
     const dur = typeof cfg.animation_speed_ms === "number"
       ? cfg.animation_speed_ms
       : (speedStr === "slow" ? 3000 : speedStr === "fast" ? 700 : 1500);
+    // dash_pct: dash length as % of path (5..40), default 12
+    const dashPct = typeof cfg.dash_pct === "number" ? cfg.dash_pct : 12;
 
     const solar  = sv   != null ? sv   : 0;
     const charge = bch  != null ? bch  : 0;
@@ -287,7 +281,7 @@ class UltimatePowerflowCard extends HTMLElement {
       batActive   ? (batDisch ? "Bd" : "Bc") : "b",
       gridActive  ? (exporting ? "Ge" : "Gi") : "g",
       evActive    ? "E" : "e",
-      shape, String(dur),
+      String(dur), String(dashPct),
     ].join("");
     if (flowKey !== this._lastFlowKey) {
       this._lastFlowKey = flowKey;
@@ -296,23 +290,24 @@ class UltimatePowerflowCard extends HTMLElement {
 
       // Solar → meter  (route: panels→meter, forward always)
       if (cfg.solar_enabled) {
-        svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false, shape);
+        svgHtml += this._polyline(solarActive, colors.solar, ROUTES.solar_to_meter, false);
       }
       // Meter ↔ Battery
       // Route: meter→battery. Charging=forward, Discharging=reversed (battery→meter)
       if (cfg.battery_enabled) {
-        svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging, shape);
+        svgHtml += this._polyline(batActive, colors.battery, ROUTES.meter_to_bat, batDisch && !batCharging);
       }
       // Grid ↔ Meter
       // Route starts at GRID TRANSFORMER, ends at METER.
       // grid>0 import: forward (grid→meter) | grid<0 export: reversed (meter→grid)
-      svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting, shape);
+      svgHtml += this._polyline(gridActive, colors.grid, ROUTES.meter_to_grid, exporting);
 
       // Meter → EV  (route: meter→EV, forward always)
       if (cfg.ev_charger_enabled) {
-        svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false, shape);
+        svgHtml += this._polyline(evActive, colors.ev, ROUTES.meter_to_ev, false);
       }
 
+      svg.dataset.dashPct = String(dashPct);
       svg.innerHTML = svgHtml;
       // Start animation directly — no rendering dependency since we use data-len.
       this._startAnimation(dur);
@@ -331,30 +326,29 @@ class UltimatePowerflowCard extends HTMLElement {
     if (!svg) return;
     const lines = [...svg.querySelectorAll("polyline.fl-on")];
     if (!lines.length) return;
+    // dashPct passed via closure from _updateFlows (stored on svg element)
+    const pct = parseFloat(svg.dataset.dashPct) || 12;
     const items = lines.map(el => {
-      const len   = parseFloat(el.dataset.len) || 50;
-      const shape = el.dataset.shape || "dash";
-      let dot, dashStr;
-      if (shape === "dot") {
-        // True round dot: near-zero dash + round linecap = perfect circle
-        // The stroke-width defines the dot diameter visually
-        dot = 0.01;
-        el.style.strokeLinecap = "round";
-      } else {
-        // Dash: slightly smaller than before (12% vs old 15%)
-        dot = Math.max(3, Math.min(11, len * 0.12));
-        el.style.strokeLinecap = "square";
-      }
+      const len = parseFloat(el.dataset.len) || 50;
+      const dot = Math.max(2, Math.min(len * 0.6, len * (pct / 100)));
       el.style.strokeDasharray  = dot + " " + len;
       el.style.strokeDashoffset = "0";
       return { el, total: len + dot };
     });
 
+    // Normalize: all dots travel at the same velocity (SVG units/ms).
+    // The longest route defines the reference duration (dur).
+    // Shorter routes get a proportionally shorter duration so their dot
+    // moves at the same speed — not slower just because the path is shorter.
+    const maxTotal = Math.max(...items.map(i => i.total));
+    items.forEach(i => { i.lineDur = dur * (i.total / maxTotal); });
+
     let t0 = null;
     const tick = (ts) => {
       if (t0 === null) t0 = ts;
-      const p = ((ts - t0) % dur) / dur;
-      items.forEach(({ el, total }) => {
+      const elapsed = ts - t0;
+      items.forEach(({ el, total, lineDur }) => {
+        const p = (elapsed % lineDur) / lineDur;
         el.style.strokeDashoffset = String(-(p * total));
       });
       this._animFrame = requestAnimationFrame(tick);
@@ -500,23 +494,32 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       // ── Appearance ──────────────────────────────────────────────
       `<div class="sec">&#127912; Appearance</div>` +
 
-      // Flow shape
-      `<div class="tlbl" style="font-size:13px;margin-bottom:4px">Flow shape</div>` +
-      `<div class="shape-row">` +
-        `<button class="shape-btn${(c.flow_shape||"dash")==="dash"?" active":""}" data-shape="dash">&#9135; Dash</button>` +
-        `<button class="shape-btn${c.flow_shape==="dot"?" active":""}" data-shape="dot">&#9679; Dot</button>` +
+      // Speed custom slider (left=slow, right=fast)
+      `<div class="tlbl" style="font-size:13px;margin-bottom:4px">Animation speed</div>` +
+      `<div class="cslider-wrap">` +
+        `<span class="lbl">Slow</span>` +
+        `<div class="cslider" data-slider="speed">` +
+          `<div class="cslider-track">` +
+            `<div class="cslider-fill" style="width:${Math.round((1-(((c.animation_speed_ms||1500)-200)/4800))*100)}%"></div>` +
+            `<div class="cslider-thumb" style="left:${Math.round((1-(((c.animation_speed_ms||1500)-200)/4800))*100)}%"></div>` +
+          `</div>` +
+        `</div>` +
+        `<span class="lbl">Fast</span>` +
+        `<span class="val" data-val="speed">${((c.animation_speed_ms||1500)/1000).toFixed(1)}s</span>` +
       `</div>` +
 
-      // Speed slider
-      `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Animation speed</div>` +
-      `<div class="speed-wrap">` +
-        `<span style="font-size:12px;color:var(--secondary-text-color)">Slow</span>` +
-        `<input type="range" min="200" max="5000" step="100"` +
-          ` value="${5200-(c.animation_speed_ms||1500)}"` +
-          ` data-key="animation_speed_ms"` +
-          ` style="touch-action:none;user-select:none;cursor:pointer;">` +
-        `<span style="font-size:12px;color:var(--secondary-text-color)">Fast</span>` +
-        `<span class="speed-val">${((c.animation_speed_ms||1500)/1000).toFixed(1)}s</span>` +
+      // Dash length custom slider
+      `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Dash length</div>` +
+      `<div class="cslider-wrap">` +
+        `<span class="lbl">Short</span>` +
+        `<div class="cslider" data-slider="dash">` +
+          `<div class="cslider-track">` +
+            `<div class="cslider-fill" style="width:${Math.round((((c.dash_pct||12)-5)/35)*100)}%"></div>` +
+            `<div class="cslider-thumb" style="left:${Math.round((((c.dash_pct||12)-5)/35)*100)}%"></div>` +
+          `</div>` +
+        `</div>` +
+        `<span class="lbl">Long</span>` +
+        `<span class="val" data-val="dash">${c.dash_pct||12}%</span>` +
       `</div>` +
 
       // Colors
@@ -537,34 +540,45 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       });
     });
 
-    // Bind shape buttons
-    this.shadowRoot.querySelectorAll(".shape-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        this._pick("flow_shape", btn.dataset.shape);
-        this._render();
+    // Bind custom sliders
+    this.shadowRoot.querySelectorAll(".cslider").forEach((slider) => {
+      const type   = slider.dataset.slider; // "speed" or "dash"
+      const track  = slider.querySelector(".cslider-track");
+      const fill   = slider.querySelector(".cslider-fill");
+      const thumb  = slider.querySelector(".cslider-thumb");
+      const valEl  = this.shadowRoot.querySelector(`.val[data-val="${type}"]`);
+
+      const update = (clientX) => {
+        const rect = track.getBoundingClientRect();
+        const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const pctStr = Math.round(pct * 100) + "%";
+        fill.style.width  = pctStr;
+        thumb.style.left  = pctStr;
+
+        if (type === "speed") {
+          // left=slow(5000ms), right=fast(200ms) — invert pct
+          const ms = Math.round(5000 - pct * 4800);
+          if (valEl) valEl.textContent = (ms / 1000).toFixed(1) + "s";
+          this._pick("animation_speed_ms", ms);
+        } else {
+          // dash: 5%..40%
+          const pctVal = Math.round(5 + pct * 35);
+          if (valEl) valEl.textContent = pctVal + "%";
+          this._pick("dash_pct", pctVal);
+        }
+      };
+
+      slider.addEventListener("pointerdown", (e) => {
+        slider.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        update(e.clientX);
+      });
+      slider.addEventListener("pointermove", (e) => {
+        if (e.buttons !== 1) return;
+        e.preventDefault();
+        update(e.clientX);
       });
     });
-
-    // Bind speed slider — use pointer events to prevent page text selection while dragging
-    const speedSlider = this.shadowRoot.querySelector("input[data-key='animation_speed_ms']");
-    if (speedSlider) {
-      const updateSpeed = (sliderVal) => {
-        // Invert: slider left=slow(5000), right=fast(200)
-        const ms = 5200 - parseInt(sliderVal);
-        this._pick("animation_speed_ms", ms);
-        const valEl = this.shadowRoot.querySelector(".speed-val");
-        if (valEl) valEl.textContent = (ms / 1000).toFixed(1) + "s";
-      };
-      // 'input' fires on keyboard and click — keep for accessibility
-      speedSlider.addEventListener("input", (e) => updateSpeed(e.target.value));
-      // Pointer capture prevents text selection on drag
-      speedSlider.addEventListener("pointerdown", (e) => {
-        speedSlider.setPointerCapture(e.pointerId);
-      });
-      speedSlider.addEventListener("pointermove", (e) => {
-        if (e.buttons === 1) updateSpeed(speedSlider.value);
-      });
-    }
 
     // Bind color inputs
     this.shadowRoot.querySelectorAll("input[type=color]").forEach((inp) => {
