@@ -241,9 +241,10 @@ class UltimatePowerflowCard extends HTMLElement {
       len += Math.sqrt(dx * dx + dy * dy);
     }
 
-    // shape="dot": round linecap + larger dot, shape="dash" (default): square-ish dash
+    // shape="dot": thicker stroke so the 0.01-unit dash looks like a visible circle
+    // shape="dash": default stroke width
     const extraStyle = shape === "dot"
-      ? `stroke-linecap:round;`
+      ? `stroke-width:3;stroke-linecap:round;`
       : `stroke-linecap:square;`;
 
     return `<polyline class="fl ${stateClass}" points="${this._pts(actualPts)}" `
@@ -331,13 +332,19 @@ class UltimatePowerflowCard extends HTMLElement {
     const lines = [...svg.querySelectorAll("polyline.fl-on")];
     if (!lines.length) return;
     const items = lines.map(el => {
-      // Read pre-calculated length from data attribute — no getTotalLength() needed.
       const len   = parseFloat(el.dataset.len) || 50;
       const shape = el.dataset.shape || "dash";
-      // dot shape: smaller round circle | dash: longer rectangular streak
-      const dot = shape === "dot"
-        ? Math.max(1.5, Math.min(4,  len * 0.04))   // small tight circle
-        : Math.max(3,   Math.min(14, len * 0.15));   // longer dash streak
+      let dot, dashStr;
+      if (shape === "dot") {
+        // True round dot: near-zero dash + round linecap = perfect circle
+        // The stroke-width defines the dot diameter visually
+        dot = 0.01;
+        el.style.strokeLinecap = "round";
+      } else {
+        // Dash: slightly smaller than before (12% vs old 15%)
+        dot = Math.max(3, Math.min(11, len * 0.12));
+        el.style.strokeLinecap = "square";
+      }
       el.style.strokeDasharray  = dot + " " + len;
       el.style.strokeDashoffset = "0";
       return { el, total: len + dot };
@@ -504,7 +511,10 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Animation speed</div>` +
       `<div class="speed-wrap">` +
         `<span style="font-size:12px;color:var(--secondary-text-color)">Slow</span>` +
-        `<input type="range" min="200" max="5000" step="100" value="${c.animation_speed_ms||1500}" data-key="animation_speed_ms">` +
+        `<input type="range" min="200" max="5000" step="100"` +
+          ` value="${5200-(c.animation_speed_ms||1500)}"` +
+          ` data-key="animation_speed_ms"` +
+          ` style="touch-action:none;user-select:none;cursor:pointer;">` +
         `<span style="font-size:12px;color:var(--secondary-text-color)">Fast</span>` +
         `<span class="speed-val">${((c.animation_speed_ms||1500)/1000).toFixed(1)}s</span>` +
       `</div>` +
@@ -535,14 +545,24 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       });
     });
 
-    // Bind speed slider
+    // Bind speed slider — use pointer events to prevent page text selection while dragging
     const speedSlider = this.shadowRoot.querySelector("input[data-key='animation_speed_ms']");
     if (speedSlider) {
-      speedSlider.addEventListener("input", (e) => {
-        const ms = parseInt(e.target.value);
+      const updateSpeed = (sliderVal) => {
+        // Invert: slider left=slow(5000), right=fast(200)
+        const ms = 5200 - parseInt(sliderVal);
         this._pick("animation_speed_ms", ms);
         const valEl = this.shadowRoot.querySelector(".speed-val");
         if (valEl) valEl.textContent = (ms / 1000).toFixed(1) + "s";
+      };
+      // 'input' fires on keyboard and click — keep for accessibility
+      speedSlider.addEventListener("input", (e) => updateSpeed(e.target.value));
+      // Pointer capture prevents text selection on drag
+      speedSlider.addEventListener("pointerdown", (e) => {
+        speedSlider.setPointerCapture(e.pointerId);
+      });
+      speedSlider.addEventListener("pointermove", (e) => {
+        if (e.buttons === 1) updateSpeed(speedSlider.value);
       });
     }
 
