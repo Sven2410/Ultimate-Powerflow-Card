@@ -257,9 +257,13 @@ class UltimatePowerflowCard extends HTMLElement {
     if (!svg) return;
 
     const colors = { ...DEF_COLORS, ...((cfg.colors) || {}) };
-    const speed  = cfg.animation_speed || "normal";
     const shape  = cfg.flow_shape || "dash";
     const THRESH = 5;
+    // animation_speed_ms (slider) takes priority over the legacy string preset
+    const speedStr = cfg.animation_speed || "normal";
+    const dur = typeof cfg.animation_speed_ms === "number"
+      ? cfg.animation_speed_ms
+      : (speedStr === "slow" ? 3000 : speedStr === "fast" ? 700 : 1500);
 
     const solar  = sv   != null ? sv   : 0;
     const charge = bch  != null ? bch  : 0;
@@ -282,7 +286,7 @@ class UltimatePowerflowCard extends HTMLElement {
       batActive   ? (batDisch ? "Bd" : "Bc") : "b",
       gridActive  ? (exporting ? "Ge" : "Gi") : "g",
       evActive    ? "E" : "e",
-      shape, speed,
+      shape, String(dur),
     ].join("");
     if (flowKey !== this._lastFlowKey) {
       this._lastFlowKey = flowKey;
@@ -310,27 +314,22 @@ class UltimatePowerflowCard extends HTMLElement {
 
       svg.innerHTML = svgHtml;
       // Start animation directly — no rendering dependency since we use data-len.
-      this._startAnimation(speed);
+      this._startAnimation(dur);
     } else if (!this._animFrame) {
       // Animation stopped unexpectedly (e.g. after DOM rebuild) — restart it
-      this._startAnimation(speed);
+      this._startAnimation(dur);
     }
   }
 
   // ── Single traveling dot animation ───────────────────────────
   // One short dash travels from start to end of the polyline, then
   // immediately restarts — a "pulse along the cable" effect.
-  _startAnimation(speed) {
+  _startAnimation(dur) {
     if (this._animFrame) { cancelAnimationFrame(this._animFrame); this._animFrame = null; }
     const svg = this.shadowRoot && this.shadowRoot.querySelector(".fl-svg");
     if (!svg) return;
     const lines = [...svg.querySelectorAll("polyline.fl-on")];
     if (!lines.length) return;
-
-    // animation_speed_ms (number, from slider) takes priority over string preset
-    const dur = typeof cfg.animation_speed_ms === "number"
-      ? cfg.animation_speed_ms
-      : (speed === "slow" ? 3000 : speed === "fast" ? 700 : 1500);
     const items = lines.map(el => {
       // Read pre-calculated length from data attribute — no getTotalLength() needed.
       const len   = parseFloat(el.dataset.len) || 50;
