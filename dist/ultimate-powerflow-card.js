@@ -416,34 +416,22 @@ class UltimatePowerflowCardEditor extends HTMLElement {
 
   constructor() {
     super();
-    // Geen attachShadow — editor gebruikt gewone DOM voor betrouwbare reloads
+    this.attachShadow({ mode: "open" });
     this._config   = {};
     this._hass     = null;
-    this._ready    = false;
+    this._rendered = false;
   }
 
   set hass(h) {
     this._hass = h;
-    if (!this._ready) this._init();
-    else this._bindPickers();
+    // Always (re-)bind pickers when hass arrives or updates.
+    // If _render already ran without hass the pickers are invisible;
+    // assigning hass here makes them appear and attaches listeners.
+    if (this._rendered) this._bindPickers();
   }
 
   setConfig(config) {
-    const prev = this._config;
     this._config = { ...config };
-    if (!this._ready) { this._init(); return; }
-    // Alleen re-renderen als structuur verandert (toggles aan/uit)
-    const structChanged =
-      prev.solar_enabled      !== config.solar_enabled      ||
-      prev.battery_enabled    !== config.battery_enabled    ||
-      prev.ev_charger_enabled !== config.ev_charger_enabled;
-    if (structChanged) this._render();
-    else this._bindPickers();
-  }
-
-  _init() {
-    if (!this._hass || this._ready) return;
-    this._ready = true;
     this._render();
   }
 
@@ -455,12 +443,14 @@ class UltimatePowerflowCardEditor extends HTMLElement {
     }));
   }
 
+  // Toggles — need re-render to show/hide picker rows
   _toggle(key, value) {
     this._config = { ...this._config, [key]: value };
     this._fire();
     this._render();
   }
 
+  // Entity pickers — save + fire, no re-render (keeps picker open)
   _pick(key, value) {
     this._config = { ...this._config, [key]: value };
     this._fire();
@@ -480,7 +470,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       `<ha-switch data-key="${key}"${c[key] ? " checked" : ""}></ha-switch>` +
       `</div>`;
 
-    this.innerHTML =
+    this.shadowRoot.innerHTML =
       `<style>${EDITOR_CSS}</style>` +
       `<div class="sec">&#9889; Core Entities</div>` +
       ep("Grid Power *",      "grid_power_entity",      c.grid_power_entity) +
@@ -501,8 +491,10 @@ class UltimatePowerflowCardEditor extends HTMLElement {
         ? ep("EV Power", "ev_charger_power_entity", c.ev_charger_power_entity)
         : "") +
 
+      // ── Appearance ──────────────────────────────────────────────
       `<div class="sec">&#127912; Appearance</div>` +
 
+      // Speed custom slider (left=slow, right=fast)
       `<div class="tlbl" style="font-size:13px;margin-bottom:4px">Animation speed</div>` +
       `<div class="cslider-wrap">` +
         `<span class="lbl">Slow</span>` +
@@ -516,6 +508,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
         `<span class="val" data-val="speed">${((c.animation_speed_ms||1500)/1000).toFixed(1)}s</span>` +
       `</div>` +
 
+      // Dash length custom slider
       `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Dash length</div>` +
       `<div class="cslider-wrap">` +
         `<span class="lbl">Short</span>` +
@@ -529,6 +522,7 @@ class UltimatePowerflowCardEditor extends HTMLElement {
         `<span class="val" data-val="dash">${c.dash_pct||12}%</span>` +
       `</div>` +
 
+      // Colors
       `<div class="tlbl" style="font-size:13px;margin:10px 0 4px">Flow line colors</div>` +
       `<div class="cr">` +
         `<div class="ci"><input type="color" value="${(c.colors&&c.colors.grid)||DEF_COLORS.grid}" data-key="colors.grid"><span>Grid</span></div>` +
@@ -537,45 +531,59 @@ class UltimatePowerflowCardEditor extends HTMLElement {
         `<div class="ci"><input type="color" value="${(c.colors&&c.colors.ev)||DEF_COLORS.ev}" data-key="colors.ev"><span>EV</span></div>` +
       `</div>`;
 
-    // Switches
-    this.querySelectorAll("ha-switch").forEach(el => {
-      el.addEventListener("change", e => {
+    this._rendered = true;
+
+    // Bind switches
+    this.shadowRoot.querySelectorAll("ha-switch").forEach((el) => {
+      el.addEventListener("change", (e) => {
         if (el.dataset.key) this._toggle(el.dataset.key, e.target.checked);
       });
     });
 
-    // Custom sliders
-    this.querySelectorAll(".cslider").forEach(slider => {
-      const type  = slider.dataset.slider;
-      const track = slider.querySelector(".cslider-track");
-      const fill  = slider.querySelector(".cslider-fill");
-      const thumb = slider.querySelector(".cslider-thumb");
-      const valEl = this.querySelector(`.val[data-val="${type}"]`);
+    // Bind custom sliders
+    this.shadowRoot.querySelectorAll(".cslider").forEach((slider) => {
+      const type   = slider.dataset.slider; // "speed" or "dash"
+      const track  = slider.querySelector(".cslider-track");
+      const fill   = slider.querySelector(".cslider-fill");
+      const thumb  = slider.querySelector(".cslider-thumb");
+      const valEl  = this.shadowRoot.querySelector(`.val[data-val="${type}"]`);
 
-      const update = clientX => {
-        const rect   = track.getBoundingClientRect();
-        const pct    = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const update = (clientX) => {
+        const rect = track.getBoundingClientRect();
+        const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
         const pctStr = Math.round(pct * 100) + "%";
-        fill.style.width = pctStr;
-        thumb.style.left = pctStr;
+        fill.style.width  = pctStr;
+        thumb.style.left  = pctStr;
+
         if (type === "speed") {
+          // left=slow(5000ms), right=fast(200ms) — invert pct
           const ms = Math.round(5000 - pct * 4800);
           if (valEl) valEl.textContent = (ms / 1000).toFixed(1) + "s";
           this._pick("animation_speed_ms", ms);
         } else {
+          // dash: 5%..40%
           const pctVal = Math.round(5 + pct * 35);
           if (valEl) valEl.textContent = pctVal + "%";
           this._pick("dash_pct", pctVal);
         }
       };
-      slider.addEventListener("pointerdown", e => { slider.setPointerCapture(e.pointerId); e.preventDefault(); update(e.clientX); });
-      slider.addEventListener("pointermove", e => { if (e.buttons !== 1) return; e.preventDefault(); update(e.clientX); });
+
+      slider.addEventListener("pointerdown", (e) => {
+        slider.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        update(e.clientX);
+      });
+      slider.addEventListener("pointermove", (e) => {
+        if (e.buttons !== 1) return;
+        e.preventDefault();
+        update(e.clientX);
+      });
     });
 
-    // Color inputs
-    this.querySelectorAll("input[type=color]").forEach(inp => {
-      inp.addEventListener("input", e => {
-        const key = inp.dataset.key;
+    // Bind color inputs
+    this.shadowRoot.querySelectorAll("input[type=color]").forEach((inp) => {
+      inp.addEventListener("input", (e) => {
+        const key = inp.dataset.key; // e.g. "colors.grid"
         if (!key) return;
         const [parent, child] = key.split(".");
         const updated = { ...((this._config[parent]) || {}), [child]: e.target.value };
@@ -584,24 +592,30 @@ class UltimatePowerflowCardEditor extends HTMLElement {
       });
     });
 
+    // Bind pickers if hass already available; if not, hass setter will do it
     this._bindPickers();
   }
 
   _bindPickers() {
-    if (!this._hass) return;
-    this.querySelectorAll("ha-entity-picker").forEach(el => {
+    if (!this._hass) return; // hass not available yet — hass setter will retry
+
+    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((el) => {
+      // Assign hass so the picker renders and shows suggestions
       el.hass = this._hass;
+
+      // Attach listener once per element instance
       if (!el._upfc_bound) {
         el._upfc_bound = true;
-        el.addEventListener("value-changed", e => {
-          const val = e.detail && e.detail.value !== undefined ? e.detail.value : e.target.value;
+        el.addEventListener("value-changed", (e) => {
+          const val = e.detail && e.detail.value !== undefined
+            ? e.detail.value
+            : e.target.value;
           if (el.dataset.key) this._pick(el.dataset.key, val);
         });
       }
     });
   }
 }
-
 // ── Register ──────────────────────────────────────────────
 if (!customElements.get("ultimate-powerflow-card"))
   customElements.define("ultimate-powerflow-card", UltimatePowerflowCard);
